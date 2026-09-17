@@ -31,6 +31,12 @@ internal static class Op
     public const int UseEffectCard = 5056;
 
     /// <summary>
+    /// 5초마다 오는 하트비트 응답. 우리 요청의 응답이라 헤더 요청 번호가 0이 아니지만 화면과는
+    /// 무관하다. 본문을 해석하지 않으므로 허용목록에 넣지 않는다.
+    /// </summary>
+    public const int Heartbeat = 5004;
+
+    /// <summary>
     /// 칩을 골랐다. <b>획득은 이 메시지가 확정한다</b> — 게임도
     /// <c>RelicLogic.OnSelectRelicS2CServerCallBack</c>에서 <c>!IsReroll &amp;&amp; RelicId != 0</c>일 때만
     /// <c>UpdateSelectedRelic</c>을 부른다. 버프를 안 만드는 칩도 이 메시지는 온다.

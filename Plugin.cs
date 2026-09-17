@@ -117,18 +117,16 @@ public class Plugin : BasePlugin
 
         ConfigEntry<bool> syncAnimation = Config.Bind(
             "Overlay", "SyncWithAnimation", true,
-            "오버레이 줄을 게임 연출에 맞춰 늦게 보여준다. 파일 로그는 영향이 없다. " +
-            "종류별 지연은 플러그인 폴더의 overlay-timing.tsv가 정한다(없으면 순서만 맞춘다).");
-        ConfigEntry<int> syncOffsetMs = Config.Bind(
-            "Overlay", "SyncOffsetMs", 0,
-            "모든 연출 지연에 더하는 보정값(밀리초). 음수면 그만큼 일찍 보여준다.");
-        ConfigEntry<int> syncMaxDelayMs = Config.Bind(
-            "Overlay", "SyncMaxDelayMs", 8000,
-            "한 줄이 수신 뒤 기다릴 수 있는 최대 시간(밀리초). 앞 줄이 밀려도 이보다 늦게 나오지 않는다.");
+            "오버레이 줄을 게임 화면이 그 장면에 도달할 때 보여준다. 게임은 연출을 차례대로 " +
+            "재생하므로 봇 차례가 이어지면 화면이 수십 초 뒤처진다. 파일 로그는 영향이 없다.");
+        ConfigEntry<int> syncMaxLagMs = Config.Bind(
+            "Overlay", "SyncMaxLagMs", 60000,
+            "화면이 수신보다 뒤처졌다고 볼 수 있는 최대 시간(밀리초). 이보다 늦게 나오는 줄은 없다. " +
+            "실측 최대 지연은 약 37초였다.");
         ConfigEntry<bool> traceTiming = Config.Bind(
             "Diagnostics", "TraceTiming", false,
-            "연출 지연을 재기 위한 기록을 BepInEx 로그에 남긴다. 켜면 F10을 눌러 " +
-            "\"지금 화면에 연출이 끝났다\"를 표시할 수 있다. 측정이 끝나면 false로 둘 것.");
+            "화면 지연을 재기 위한 기록(수신 프레임 헤더, PK 진행, 표시 시각)을 BepInEx 로그에 남긴다. " +
+            "켜면 F10으로 \"지금 화면에서 본 장면\"의 시각을 남길 수 있다. 측정이 끝나면 false로 둘 것.");
 
         if (showOverlay.Value)
         {
@@ -141,12 +139,11 @@ public class Plugin : BasePlugin
                             toggle, scrollLines.Value,
                             new Vector2(overlayX.Value, overlayY.Value),
                             pos => SaveTogether(() => { overlayX.Value = pos.x; overlayY.Value = pos.y; }));
-            OverlaySchedule.Init(Log, syncAnimation.Value, syncOffsetMs.Value, syncMaxDelayMs.Value,
-                                 traceTiming.Value,
-                                 Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "overlay-timing.tsv"));
+            OverlaySchedule.Init(Log, syncAnimation.Value, syncMaxLagMs.Value, traceTiming.Value);
             logger.Mirror = OverlaySchedule.Line;
             logger.MirrorNewPage = OverlaySchedule.Page;
             logger.MirrorClear = OverlaySchedule.Reset;
+            logger.MirrorSync = OverlaySchedule.Sync;
         }
 
         // 씬이 바뀌면 화면만 비운다. 로비로 나왔는데 전투 로그가 떠 있으면 방해되니까.

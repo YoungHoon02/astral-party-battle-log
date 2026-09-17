@@ -24,18 +24,27 @@ internal sealed class BattleLogger
     private readonly bool _logCards;
 
     /// <summary>출력 대상을 델리게이트로 받는다 — 이 클래스가 UI를 몰라도 되게.</summary>
-    public Action<string, LineKind, long>? Mirror;
+    public Action<string, LineKind, long, int>? Mirror;
     public Action<int, long>? MirrorNewPage;
     public Action? MirrorClear;
+    public Action? MirrorSync;
 
     /// <summary>
-    /// 지금 해석 중인 패킷의 사건 종류와 그룹. 한 패킷에서 나온 줄은 한 그룹이라
+    /// 지금 해석 중인 패킷의 사건 종류·그룹·칸 수. 한 패킷에서 나온 줄은 한 그룹이라
     /// 오버레이에 함께 나간다.
     /// </summary>
     private LineKind _kind;
     private long _group;
     private long _groupSeq;
+    private int _units;
     private bool _kindFromCause;
+
+    /// <summary>
+    /// 방금 받은 PK 결과의 그룹. 뒤따르는 PK 피해(<c>UpdateHeroAttr</c>, 원인 battle)를 이
+    /// 그룹에 넣어 PK 줄과 함께 보이게 한다. 따로 두면 재생 모델이 PK 연출이 끝난 뒤에야
+    /// 피해를 보여준다.
+    /// </summary>
+    private long _battleGroup = -1;
 
     private readonly NameTable _names;
     private readonly Roster _roster;
@@ -172,7 +181,12 @@ internal sealed class BattleLogger
 
         _group = ++_groupSeq;
         _kind = KindOf(cmdId);
+        _units = 0;
         _kindFromCause = cmdId == Op.UpdateHeroAttr;
+
+        // 우리 요청에 대한 응답이다. 사용자는 결정 창을 보고서야 요청을 보낼 수 있으므로 화면이
+        // 여기까지 따라와 있다. 하트비트만 화면과 무관하게 주기적으로 온다.
+        if (header.UpSn != 0 && cmdId != Op.Heartbeat) MirrorSync?.Invoke();
 
         if (Op.GameEntry.Contains(cmdId))
         {
@@ -187,6 +201,8 @@ internal sealed class BattleLogger
             if (_traceUnknown) Diag($"skip cmd={cmdId,-5} len={body.Length}");
             return;
         }
+
+        if (cmdId != Op.UpdateHeroAttr) _battleGroup = -1;
 
         // 진단용 원본 덤프. 허용목록 안에서만 동작하므로 카드 메시지는 절대 대상이 되지 않는다.
         if (_hexDump.Contains(cmdId))
@@ -337,6 +353,7 @@ internal sealed class BattleLogger
         // movePoint가 비어 올 때가 있다. 눈의 합으로 메운다.
         long steps = movePoint;
         if (steps == 0) foreach (long v in vals) steps += v;
+        _units = (int)steps;
         if (steps != 0) sb.Append($" → {steps}칸");
         Emit(sb.ToString());
     }
@@ -352,6 +369,7 @@ internal sealed class BattleLogger
             if (field == 1) pid = v;
             else if (field == 2) movePoint = v;
         }
+        _units = (int)movePoint;
         if (movePoint != 0) Emit($"[R{_round}] {_roster.Name(pid)} 추가 이동 {movePoint}칸");
     }
 
@@ -518,6 +536,7 @@ internal sealed class BattleLogger
         Emit($"[R{_round}] PK{tags}  {attacker.Format(_roster, _names, attacking: true)}"
              + $"  vs  {defender.Format(_roster, _names, attacking: false)}");
         Said(BattleCause, 0, attacker.PlayerId);
+        _battleGroup = _group;
     }
 
     private readonly struct Role
@@ -616,7 +635,11 @@ internal sealed class BattleLogger
             }
         }
 
-        if (_kindFromCause) _kind = KindOfCause(causeSource);
+        if (_kindFromCause)
+        {
+            _kind = KindOfCause(causeSource);
+            if (causeSource == BattleCause && _battleGroup >= 0) _group = _battleGroup;
+        }
 
         // 보여줄 게 없으면 머리줄만 남는다. 칩 획득은 SelectRelicS2C가 따로 말하므로
         // 여기서 빈 머리줄을 살려둘 이유가 없다.
@@ -1464,12 +1487,12 @@ internal sealed class BattleLogger
     /// <b>BepInEx 로그로는 보내지 않는다</b> — 한 판에 수백 줄이라 다른 로그가 파묻힌다.
     /// 진단용 출력은 반대로 거기로만 간다 (<see cref="Diag"/>).
     /// </summary>
-    private void EmitLine(string line) => EmitLine(line, _kind, _group);
+    private void EmitLine(string line) => EmitLine(line, _kind, _group, _units);
 
-    private void EmitLine(string line, LineKind kind, long group)
+    private void EmitLine(string line, LineKind kind, long group, int units = 0)
     {
         string plain = Palette.Strip(line);
-        try { Mirror?.Invoke(line, kind, group); } catch { /* 출력 하나가 막혀도 나머지는 계속 */ }
+        try { Mirror?.Invoke(line, kind, group, units); } catch { /* 출력 하나가 막혀도 나머지는 계속 */ }
         WriteFile(plain);
     }
 
@@ -1478,9 +1501,10 @@ internal sealed class BattleLogger
         Op.RoundStart or Op.GameRoundChange => LineKind.Round,
         Op.ActionStartNotify => LineKind.Turn,
         Op.ThrowDice => LineKind.Dice,
-        Op.MoveAgain or Op.HeroSkillMoveEffect => LineKind.Move,
+        Op.MoveAgain => LineKind.Move,
         Op.Battle => LineKind.Attack,
-        Op.BattleUseCard or Op.UseEffectCard => LineKind.Card,
+        Op.BattleUseCard => LineKind.Submit,
+        Op.UseEffectCard => LineKind.Card,
         Op.LandBuffs => LineKind.Skill,
         Op.SelectRelic => LineKind.Relic,
         Op.UpdateHeroAttr => LineKind.Effect,
@@ -1488,16 +1512,14 @@ internal sealed class BattleLogger
     };
 
     /// <summary>
-    /// <c>UpdateHeroAttr</c>은 무엇 때문에 생긴 변화인지로 연출 시점이 갈린다. 땅 효과는
-    /// 말이 칸에 도착한 뒤에 보이므로 이동과 같이 둔다.
+    /// <c>UpdateHeroAttr</c>은 이미 재생된 행동(카드·스킬·PK)의 <b>결과</b>다. 결과에 행동의
+    /// 연출 길이를 또 붙이면 같은 연출을 두 번 기다리게 되므로 원인과 무관하게 길이 0으로 둔다.
+    /// PK 피해만 PK 줄과 같은 그룹으로 묶는다.
     /// </summary>
     private static LineKind KindOfCause(long causeSource) => causeSource switch
     {
         BattleCause => LineKind.Hit,
-        SkillCause => LineKind.Skill,
-        CardCause => LineKind.Card,
-        RelicCause => LineKind.Relic,
-        LandCause or LandBuffCause => LineKind.Move,
+        LandCause or LandBuffCause => LineKind.Land,
         _ => LineKind.Effect,
     };
 
