@@ -12,12 +12,13 @@ using HarmonyLib;
 
 namespace AstralPartyBattleLog;
 
-[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.5")]
+[BepInPlugin(Guid, "Astral Party Battle Log", "0.1.6")]
 public class Plugin : BasePlugin
 {
     public const string Guid = "astralparty.battlelog";
 
     private Harmony? _harmony;
+    private BattleLogger? _logger;
 
     public override void Load()
     {
@@ -107,7 +108,26 @@ public class Plugin : BasePlugin
 
         var logger = new BattleLogger(Log, path, traceFrames.Value, dumpSet,
                                       logPlayerIds.Value, logCards.Value, names);
+        _logger = logger;
         SocketTap.OnFrame = logger.OnFrame;
+        // 파일은 전용 스레드가 쓰므로 종료할 때 남은 줄을 마저 쓰게 한다.
+        // 순수 .NET 이벤트라 IL2CPP 등록 문제를 일으키지 않는다(AnimSpeedMod와 같은 방식).
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => logger.Close();
+
+        ConfigEntry<bool> syncAnimation = Config.Bind(
+            "Overlay", "SyncWithAnimation", true,
+            "오버레이 줄을 게임 연출에 맞춰 늦게 보여준다. 파일 로그는 영향이 없다. " +
+            "종류별 지연은 플러그인 폴더의 overlay-timing.tsv가 정한다(없으면 순서만 맞춘다).");
+        ConfigEntry<int> syncOffsetMs = Config.Bind(
+            "Overlay", "SyncOffsetMs", 0,
+            "모든 연출 지연에 더하는 보정값(밀리초). 음수면 그만큼 일찍 보여준다.");
+        ConfigEntry<int> syncMaxDelayMs = Config.Bind(
+            "Overlay", "SyncMaxDelayMs", 8000,
+            "한 줄이 수신 뒤 기다릴 수 있는 최대 시간(밀리초). 앞 줄이 밀려도 이보다 늦게 나오지 않는다.");
+        ConfigEntry<bool> traceTiming = Config.Bind(
+            "Diagnostics", "TraceTiming", false,
+            "연출 지연을 재기 위한 기록을 BepInEx 로그에 남긴다. 켜면 F10을 눌러 " +
+            "\"지금 화면에 연출이 끝났다\"를 표시할 수 있다. 측정이 끝나면 false로 둘 것.");
 
         if (showOverlay.Value)
         {
@@ -120,9 +140,12 @@ public class Plugin : BasePlugin
                             toggle, scrollLines.Value,
                             new Vector2(overlayX.Value, overlayY.Value),
                             pos => SavePosition(overlayX, overlayY, pos));
-            logger.Mirror = LogOverlay.Enqueue;
-            logger.MirrorNewPage = LogOverlay.NewPage;
-            logger.MirrorClear = LogOverlay.GameStarted;
+            OverlaySchedule.Init(Log, syncAnimation.Value, syncOffsetMs.Value, syncMaxDelayMs.Value,
+                                 traceTiming.Value,
+                                 Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "overlay-timing.tsv"));
+            logger.Mirror = OverlaySchedule.Line;
+            logger.MirrorNewPage = OverlaySchedule.Page;
+            logger.MirrorClear = OverlaySchedule.Reset;
         }
 
         // 씬이 바뀌면 화면만 비운다. 로비로 나왔는데 전투 로그가 떠 있으면 방해되니까.
@@ -171,6 +194,8 @@ public class Plugin : BasePlugin
     public override bool Unload()
     {
         SocketTap.OnFrame = null;
+        OverlaySchedule.Discard();
+        _logger?.Close();
         _harmony?.UnpatchSelf();
         return true;
     }

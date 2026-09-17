@@ -100,6 +100,10 @@ BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성�
 애니메이션 재생 전에 기록하기 때문입니다. PvP에서는 작은 정보 우위가 될 수 있으므로
 사용 전에 이 점과 게임 이용약관을 확인해 주세요.
 
+오버레이를 연출에 맞춰 늦게 보여주는 구조가 들어 있지만, 사건별 지연값은 아직
+측정하지 않았습니다. 측정 프로필(`overlay-timing.tsv`)이 없으면 지금처럼 바로
+표시됩니다. 자세한 내용은 [오버레이 연출 동기화](docs/OVERLAY-TIMING.md)를 참고하세요.
+
 **상대 손패는 읽지 않습니다.** 손패 정보를 처리하는 기능 자체가 포함되어 있지
 않습니다. 읽는 정보의 범위와 기술적인 근거는
 [기여 안내](CONTRIBUTING.md#카드에-그은-선)에 정리되어 있습니다.
@@ -125,6 +129,10 @@ BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성�
 | `Overlay.ScrollLines` | 3 | 휠 한 칸에 움직일 줄 수 |
 | `Overlay.PositionX` | -1 | 창 왼쪽 위 모서리의 가로 위치 (화면 높이 1080 기준 좌표). 손잡이를 끌면 저장됩니다 |
 | `Overlay.PositionY` | -1 | 창 왼쪽 위 모서리의 세로 위치 (위에서부터). -1이거나 값을 지우면 화면 왼쪽 아래 기본 위치 |
+| `Overlay.SyncWithAnimation` | true | 오버레이 줄을 게임 연출에 맞춰 늦게 보여줍니다. 파일 로그는 그대로입니다 |
+| `Overlay.SyncOffsetMs` | 0 | 연출 지연 전체 보정 (밀리초, 음수면 일찍) |
+| `Overlay.SyncMaxDelayMs` | 8000 | 한 줄이 기다릴 수 있는 최대 시간 |
+| `Diagnostics.TraceTiming` | false | 연출 지연 측정 기록. 켜면 F10으로 표시합니다 |
 | `Output.WriteFile` | true | `battle-log.txt`에도 남기기 |
 | `Output.LogCards` | true | 공개된 카드 기록 |
 | `Names.Rebuild` | false | 이름표를 다시 만듭니다 (게임 업데이트 후) |
@@ -136,6 +144,7 @@ BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성�
 | [기여 안내](CONTRIBUTING.md) | 정보 수집 범위, 개인정보 보호 기준, PR 체크리스트 |
 | [아키텍처 및 제약](docs/ARCHITECTURE.md) | 현재 구현 구조와 반드시 지켜야 할 기술 제약 |
 | [프로토콜 필드](docs/protocol-fields.md) | 디코딩하는 메시지와 필드 배치 |
+| [오버레이 연출 동기화](docs/OVERLAY-TIMING.md) | 표시 지연 구조와 측정 절차 |
 | [조사 기록](docs/FINDINGS.md) | 구현 전에 확인한 게임 구조와 근거 |
 | [초기 설계 기록](docs/LOGGER-DESIGN.md) | 현재 구현과 다를 수 있는 초기 설계 결정 |
 

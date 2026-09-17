@@ -176,15 +176,25 @@ internal static class LogOverlay
     }
 
     /// <summary>소켓 IO 스레드에서 호출된다. Unity를 건드리지 않는다.</summary>
-    public static void Enqueue(string line) => Pending.Enqueue(Signal.Line(line));
-    public static void NewPage(int round) => Pending.Enqueue(Signal.Page(round));
+    public static void Enqueue(string line)
+    {
+        if (!_failed) Pending.Enqueue(Signal.Line(line));
+    }
+
+    public static void NewPage(int round)
+    {
+        if (!_failed) Pending.Enqueue(Signal.Page(round));
+    }
 
     /// <summary>
     /// 새 판이 시작됐다. 판 시작 신호는 <b>픽창에서</b> 오므로 여기서는
     /// 페이지만 비우고, 창은 픽창을 벗어나는 씬 전환(<see cref="OnSceneChanged"/>)에서 띄운다.
     /// 소켓 스레드에서 부르므로 큐를 거쳐 <see cref="Pump"/>가 처리한다.
     /// </summary>
-    public static void GameStarted() => Pending.Enqueue(Signal.GameStart());
+    public static void GameStarted()
+    {
+        if (!_failed) Pending.Enqueue(Signal.GameStart());
+    }
 
     /// <summary>
     /// 씬이 바뀌었다. 창을 띄우고 숨기는 기준이 둘 다 씬 전환이다.
@@ -220,6 +230,7 @@ internal static class LogOverlay
         _battleScene = null;
         _inGame = false;
         SetVisible(false);
+        OverlaySchedule.Discard();
     }
 
     private static void EnterGame()

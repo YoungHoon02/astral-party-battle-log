@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Text;
 using AstralPartyBattleLog.Proto;
 using BepInEx.Logging;
@@ -9,7 +8,7 @@ namespace AstralPartyBattleLog.Log;
 
 /// <summary>
 /// 허용목록에 있는 프레임만 디코딩해서 사람이 읽는 한 줄로 만든다.
-/// 소켓 IO 스레드에서 호출되므로 파일 쓰기는 락으로 보호한다.
+/// 소켓 IO 스레드에서 호출된다. 디스크 쓰기는 <see cref="LogFileWriter"/>가 따로 한다.
 ///
 /// 주의: 이 게임의 .proto는 숫자를 sfixed32/sfixed64로 선언했다(enum만 varint).
 /// 그래서 숫자는 반드시 <see cref="ProtoReader.TryReadNumber"/>로 읽어야 한다.
@@ -17,17 +16,25 @@ namespace AstralPartyBattleLog.Log;
 internal sealed class BattleLogger
 {
     private readonly ManualLogSource _log;
-    private readonly object _fileGate = new();
-    private readonly string? _filePath;
+    private readonly LogFileWriter? _file;
     private readonly bool _traceUnknown;
     private readonly HashSet<int> _hexDump;
     private readonly bool _logPlayerIds;
     private readonly bool _logCards;
 
     /// <summary>출력 대상을 델리게이트로 받는다 — 이 클래스가 UI를 몰라도 되게.</summary>
-    public Action<string>? Mirror;
-    public Action<int>? MirrorNewPage;
+    public Action<string, LineKind, long>? Mirror;
+    public Action<int, long>? MirrorNewPage;
     public Action? MirrorClear;
+
+    /// <summary>
+    /// 지금 해석 중인 패킷의 사건 종류와 그룹. 한 패킷에서 나온 줄은 한 그룹이라
+    /// 오버레이에 함께 나간다.
+    /// </summary>
+    private LineKind _kind;
+    private long _group;
+    private long _groupSeq;
+    private bool _kindFromCause;
 
     private readonly NameTable _names;
     private readonly Roster _roster;
@@ -73,6 +80,8 @@ internal sealed class BattleLogger
         public long Actor, Pid, Change, Ori, Curr, CauseSource, CauseId;
         public string CauseText = "", Header = "", Line = "";
         public DateTime At;
+        public LineKind Kind;
+        public long Group;
     }
 
     /// <summary>
@@ -130,7 +139,7 @@ internal sealed class BattleLogger
                         NameTable names)
     {
         _log = log;
-        _filePath = filePath;
+        if (filePath is not null) _file = new LogFileWriter(filePath, log.LogWarning);
         _traceUnknown = traceUnknown;
         _hexDump = hexDump;
         _logPlayerIds = logPlayerIds;
@@ -151,6 +160,10 @@ internal sealed class BattleLogger
     {
         // 짝 없는 골드 줄(상점 지출 등)이 영영 안 나오는 걸 막는 안전장치.
         if (_goldHold is { } waiting && DateTime.UtcNow - waiting.At > GoldPairWindow) FlushGold();
+
+        _group = ++_groupSeq;
+        _kind = KindOf(cmdId);
+        _kindFromCause = cmdId == Op.UpdateHeroAttr;
 
         if (Op.GameEntry.Contains(cmdId))
         {
@@ -393,8 +406,10 @@ internal sealed class BattleLogger
             if (_names.Lookup("skill", skillId) is { } name) skill.Append($" \"{name}\"");
             AppendTargets(skill, targets);
             Emit(skill.ToString());
+            _kind = LineKind.Skill;
             _saidSkillUse = pid;   // LandBuffs 추측이 같은 말을 반복하지 않게
             _activeSkillId = skillId;
+            _activeSkillCaster = pid;
             _activeSkillAt = DateTime.UtcNow;
             Said(SkillCause, skillId, pid);
             return;
@@ -561,6 +576,7 @@ internal sealed class BattleLogger
         _goldSeen = null;
         _goldSeenMany = false;
         _causeNamesRelic = false;
+        _msgActor = 0;
         _skillFired.Clear();
         _causeSkillLine = null;
 
@@ -569,6 +585,7 @@ internal sealed class BattleLogger
             if (field == 1 && IsNumber(wire))
             {
                 if (!r.TryReadNumber(wire, out actor)) return;
+                _msgActor = actor;
             }
             else if (field == 2 && wire == ProtoReader.WireLength && r.TryReadMessage(out var causeMsg))
             {
@@ -584,6 +601,8 @@ internal sealed class BattleLogger
                 return;
             }
         }
+
+        if (_kindFromCause) _kind = KindOfCause(causeSource);
 
         // 보여줄 게 없으면 머리줄만 남는다. 칩 획득은 SelectRelicS2C가 따로 말하므로
         // 여기서 빈 머리줄을 살려둘 이유가 없다.
@@ -624,6 +643,7 @@ internal sealed class BattleLogger
                 Ori = gold.Ori, Curr = gold.Curr,
                 CauseSource = causeSource, CauseId = causeId, CauseText = cause,
                 Header = header, Line = lines[0], At = DateTime.UtcNow,
+                Kind = _kind, Group = _group,
             };
             return;
         }
@@ -670,9 +690,10 @@ internal sealed class BattleLogger
     {
         if (_goldHold is not { } held) return;
         _goldHold = null;
-        EmitLine(held.Header);
+        // 보류는 문장을 만들기 위한 것이다. 화면에 나갈 때는 원래 패킷의 종류·그룹을 쓴다.
+        EmitLine(held.Header, held.Kind, held.Group);
         Said(held.CauseSource, held.CauseId, held.Actor);
-        EmitLine("        " + held.Line);
+        EmitLine("        " + held.Line, held.Kind, held.Group);
     }
 
     // 이동 도중 발동한 결과 봉투. 알맹이가 UpdateHeroAttrS2C라 같은 디코더를 쓴다
@@ -807,6 +828,8 @@ internal sealed class BattleLogger
     private const long SkillCause = 1;
     private const long CardCause = 2;
     private const long RelicCause = 17;
+    private const long LandBuffCause = 8;
+    private const long LandCause = 9;
     private const long BattleCause = 12;
 
     private (string Text, long Source, long Id) DecodeCause(ProtoReader r)
@@ -1084,7 +1107,15 @@ internal sealed class BattleLogger
     /// 부르기 때문에, 그걸 보면 바로 다음 발동이 자기 자신에게 억제돼 사건이 사라진다.
     /// </summary>
     private long _activeSkillId;
+    private long _activeSkillCaster;
     private DateTime _activeSkillAt;
+
+    /// <summary>
+    /// 지금 해석 중인 <c>UpdateHeroAttr</c>의 행위자(필드 1). 메아리는 시전자가 행위자로
+    /// 온다 — 실측에서 메아리 줄이 <c>스킬 사용</c> 바로 아래에 머리줄 없이 붙었다
+    /// (같은 원인·같은 주체). 그래서 행위자가 다르면 같은 스킬이라도 독립 발동이다.
+    /// </summary>
+    private long _msgActor;
 
     /// <summary>
     /// 액티브 사용이 낳은 메아리 버프를 가려내는 시간 창.
@@ -1101,6 +1132,7 @@ internal sealed class BattleLogger
 
     private bool AlreadySaidSkill(long skillId) =>
         _activeSkillId == skillId && skillId != 0
+        && (_msgActor == 0 || _msgActor == _activeSkillCaster)
         && DateTime.UtcNow - _activeSkillAt < SkillEchoWindow;
 
     /// <summary>
@@ -1326,7 +1358,7 @@ internal sealed class BattleLogger
     {
         FlushGold();   // 붙들어 둔 줄이 다음 라운드 페이지로 넘어가면 안 된다
         Diag($"[game] round {_round}");
-        try { MirrorNewPage?.Invoke(_round); } catch { }
+        try { MirrorNewPage?.Invoke(_round, _group); } catch { }
         WriteFile($"──────── Round {_round} ────────");
     }
 
@@ -1392,14 +1424,14 @@ internal sealed class BattleLogger
         _saidActor = 0;
         _saidAt = default;
         _activeSkillId = 0;
+        _activeSkillCaster = 0;
         _activeSkillAt = default;
-        if (_filePath is null) return;
-        lock (_fileGate)
-        {
-            try { File.WriteAllText(_filePath, ""); }
-            catch { /* 실패해도 로깅은 계속된다 */ }
-        }
+        _msgActor = 0;
+        _file?.Truncate();
     }
+
+    /// <summary>남은 파일 줄을 쓰고 끝낸다. 플러그인 언로드·프로세스 종료에서 부른다.</summary>
+    public void Close() => _file?.Close();
 
     /// <summary>
     /// 붙들어 둔 골드 줄이 있으면 먼저 내보낸다 — 출력이 이 한 곳으로 모이므로
@@ -1418,22 +1450,44 @@ internal sealed class BattleLogger
     /// <b>BepInEx 로그로는 보내지 않는다</b> — 한 판에 수백 줄이라 다른 로그가 파묻힌다.
     /// 진단용 출력은 반대로 거기로만 간다 (<see cref="Diag"/>).
     /// </summary>
-    private void EmitLine(string line)
+    private void EmitLine(string line) => EmitLine(line, _kind, _group);
+
+    private void EmitLine(string line, LineKind kind, long group)
     {
         string plain = Palette.Strip(line);
-        try { Mirror?.Invoke(line); } catch { /* 출력 하나가 막혀도 나머지는 계속 */ }
+        try { Mirror?.Invoke(line, kind, group); } catch { /* 출력 하나가 막혀도 나머지는 계속 */ }
         WriteFile(plain);
     }
 
+    private static LineKind KindOf(int cmdId) => cmdId switch
+    {
+        Op.RoundStart or Op.GameRoundChange => LineKind.Round,
+        Op.ActionStartNotify => LineKind.Turn,
+        Op.ThrowDice => LineKind.Dice,
+        Op.MoveAgain or Op.HeroSkillMoveEffect => LineKind.Move,
+        Op.Battle => LineKind.Attack,
+        Op.BattleUseCard or Op.UseEffectCard => LineKind.Card,
+        Op.LandBuffs => LineKind.Skill,
+        Op.SelectRelic => LineKind.Relic,
+        Op.UpdateHeroAttr => LineKind.Effect,
+        _ => LineKind.Immediate,
+    };
+
+    /// <summary>
+    /// <c>UpdateHeroAttr</c>은 무엇 때문에 생긴 변화인지로 연출 시점이 갈린다. 땅 효과는
+    /// 말이 칸에 도착한 뒤에 보이므로 이동과 같이 둔다.
+    /// </summary>
+    private static LineKind KindOfCause(long causeSource) => causeSource switch
+    {
+        BattleCause => LineKind.Hit,
+        SkillCause => LineKind.Skill,
+        CardCause => LineKind.Card,
+        RelicCause => LineKind.Relic,
+        LandCause or LandBuffCause => LineKind.Move,
+        _ => LineKind.Effect,
+    };
+
     private void Diag(string line) => _log.LogInfo(line);
 
-    private void WriteFile(string plain)
-    {
-        if (_filePath is null) return;
-        lock (_fileGate)
-        {
-            try { File.AppendAllText(_filePath, DateTime.Now.ToString("HH:mm:ss.fff ") + plain + Environment.NewLine); }
-            catch { /* 로그 파일 실패로 게임을 막지 않는다 */ }
-        }
-    }
+    private void WriteFile(string plain) => _file?.Append(plain);
 }
