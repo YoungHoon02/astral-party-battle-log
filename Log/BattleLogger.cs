@@ -450,11 +450,13 @@ internal sealed class BattleLogger
         }
 
         if (cardId <= 0) return;
+        // 카드를 남기지 않을 때도 원인은 말한 것으로 둔다. 그러지 않으면 뒤따르는
+        // UpdateHeroAttr의 머리줄이 `(카드 "이름")`으로 카드를 그대로 드러낸다.
+        Said(CardCause, cardId, pid);   // 뒤따르는 UpdateHeroAttr이 머리줄을 생략한다
         if (!_logCards) { AdvanceOverlay(_kind); return; }
         var sb = new StringBuilder($"[R{_round}] {_roster.Name(pid)} 효과카드 {CardLabel(cardId)}");
         AppendTargets(sb, targets);
         Emit(sb.ToString());
-        Said(CardCause, cardId, pid);   // 뒤따르는 UpdateHeroAttr이 머리줄을 생략한다
     }
 
     // 칩 획득의 **확정 신호**다. 버프에서 추론하면 버프를 안 만드는 칩, uid가 0인
