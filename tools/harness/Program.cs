@@ -1,0 +1,256 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using AstralPartyBattleLog.Log;
+using AstralPartyBattleLog.Net;
+using BepInEx.Logging;
+
+// 합성 프레임으로 디코더 경로를 확인한다. 게임 없이 도는 검증용이다.
+static class Frame
+{
+    public static byte[] Tag(int field, int wire)
+    {
+        var o = new List<byte>();
+        ulong t = ((ulong)field << 3) | (uint)wire;
+        while (true) { byte b = (byte)(t & 0x7F); t >>= 7; if (t != 0) b |= 0x80; o.Add(b); if (t == 0) break; }
+        return o.ToArray();
+    }
+    public static byte[] Fix32(int f, int v) => Cat(Tag(f, 5), BitConverter.GetBytes(v));
+    public static byte[] Fix64(int f, long v) => Cat(Tag(f, 1), BitConverter.GetBytes(v));
+    public static byte[] Varint(int f, ulong v)
+    {
+        var o = new List<byte>(Tag(f, 0));
+        while (true) { byte b = (byte)(v & 0x7F); v >>= 7; if (v != 0) b |= 0x80; o.Add(b); if (v == 0) break; }
+        return o.ToArray();
+    }
+    public static byte[] Msg(int f, byte[] body)
+    {
+        var o = new List<byte>(Tag(f, 2));
+        ulong n = (ulong)body.Length;
+        while (true) { byte b = (byte)(n & 0x7F); n >>= 7; if (n != 0) b |= 0x80; o.Add(b); if (n == 0) break; }
+        o.AddRange(body); return o.ToArray();
+    }
+    public static byte[] Cat(params byte[][] parts)
+    {
+        var o = new List<byte>(); foreach (var p in parts) o.AddRange(p); return o.ToArray();
+    }
+}
+
+class Program
+{
+    const long SkillId = 777;
+
+    static byte[] BuffMsg(long uid, int buffId, long srcKind, long srcId) =>
+        Frame.Cat(Frame.Fix64(1, uid), Frame.Fix32(2, buffId),
+                  Frame.Msg(50, Frame.Cat(Frame.Varint(1, (ulong)srcKind), Frame.Fix64(2, srcId))));
+
+    // HeroAttrEffect { 1:playerId, 6:HeroBuffChangeS2C{1:pid,2:Buff,3:op} }
+    static byte[] SkillEffect(long target, long uid) =>
+        Frame.Msg(4, Frame.Cat(
+            Frame.Fix64(1, target),
+            Frame.Msg(6, Frame.Cat(
+                Frame.Fix64(1, target),
+                Frame.Msg(2, BuffMsg(uid, 5, 1, SkillId)),
+                Frame.Varint(3, 1)))));   // Oper.Insert
+
+    static byte[] HpEffect(long target, int ori, int curr, int change, int real, int realHp, int max) =>
+        Frame.Msg(4, Frame.Cat(
+            Frame.Fix64(1, target),
+            Frame.Msg(3, Frame.Cat(
+                Frame.Fix64(1, target), Frame.Fix32(2, change), Frame.Fix32(3, ori),
+                Frame.Fix32(4, curr), Frame.Fix32(5, real), Frame.Fix32(6, realHp),
+                Frame.Fix32(7, max)))));
+
+    static byte[] Cause(long source, long id) =>
+        Frame.Msg(2, Frame.Cat(Frame.Varint(1, (ulong)source), Frame.Fix64(3, id)));
+
+    static void Main()
+    {
+        string dir = Path.GetTempPath() + "apbl-h";
+        Directory.CreateDirectory(dir);
+        string namesPath = Path.Combine(dir, "names.tsv");
+        File.WriteAllText(namesPath, "skill\t777\t훔치기\ncard\t42\t폭탄\n", new System.Text.UTF8Encoding(false));
+        var names = NameTable.Load(namesPath, _ => { });
+
+        var log = new ManualLogSource("h");
+        var lines = new List<string>();
+
+        var logger = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
+        logger.Mirror = (s, k, g, u) => lines.Add(Palette.Strip(s));
+
+        void Run(string label, byte[] body)
+        {
+            lines.Clear();
+            logger.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), body);
+            Console.WriteLine($"--- {label} ---");
+            if (lines.Count == 0) Console.WriteLine("   (출력 없음)");
+            foreach (var l in lines) Console.WriteLine("   " + l);
+            Console.WriteLine();
+        }
+
+        // A. 원인이 스킬 + 같은 스킬 버프 하나 → 사건이 남아야 한다 (회귀 검사)
+        Run("A 스킬 원인 + 같은 스킬 버프 1개 (효과 줄 없음)",
+            Frame.Cat(Frame.Fix64(1, 200), Cause(1, SkillId), SkillEffect(200, 9001)));
+
+        // B. 같은 스킬·같은 대상이 두 번 → 한 줄
+        Run("B 같은 스킬·같은 대상 2개",
+            Frame.Cat(Frame.Fix64(1, 200), Cause(1, SkillId),
+                      SkillEffect(200, 9002), SkillEffect(200, 9003)));
+
+        // C. 같은 스킬·다른 대상 → 각각
+        Run("C 같은 스킬·다른 대상 2개",
+            Frame.Cat(Frame.Fix64(1, 200), Cause(1, SkillId),
+                      SkillEffect(200, 9004), SkillEffect(300, 9005)));
+
+        // D. 만피 회복 → 걸러져야 한다
+        Run("D 만피 회복 (ori==curr==max, real=+2)",
+            Frame.Cat(Frame.Fix64(1, 400), Cause(7, 0), HpEffect(400, 9, 9, 2, 2, 9, 9)));
+
+        // E. 평범한 피해 → 남아야 한다
+        Run("E 평범한 피해 (10→7, real=-3)",
+            Frame.Cat(Frame.Fix64(1, 401), Cause(7, 0), HpEffect(401, 10, 7, -3, -3, 7, 10)));
+
+        // F. 전후 같은데 만피가 아님 → 미확정이라 남긴다
+        Run("F 전후 동일·만피 아님 (5→5/10, real=+2)",
+            Frame.Cat(Frame.Fix64(1, 402), Cause(7, 0), HpEffect(402, 5, 5, 2, 2, 5, 10)));
+
+        // G. 액티브 사용 직후의 메아리 → 스킬 사용만 남고 버프 줄은 사라진다
+        lines.Clear();
+        // UseEffectCardS2C { 1:pid, 8:useSkill, 9:skillId }
+        logger.OnFrame(new FrameHeader(Op.UseEffectCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 500), Frame.Varint(8, 1), Frame.Fix64(9, SkillId)));
+        logger.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 500), Cause(1, SkillId), SkillEffect(500, 9100)));
+        Console.WriteLine("--- G 액티브 사용 → 메아리 ---");
+        foreach (var l in lines) Console.WriteLine("   " + l);
+        Console.WriteLine();
+
+        // H. 카드 제출: 같은 uid 반복은 한 번, 다른 uid는 각각
+        lines.Clear();
+        void Card(long pid, int uid) => logger.OnFrame(new FrameHeader(Op.BattleUseCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, pid), Frame.Fix32(2, uid)));
+        logger.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 600));
+        Card(600, 11); Card(600, 11); Card(600, 12);
+        logger.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 600));   // 행동이 바뀌면 초기화
+        Card(600, 11);
+        Console.WriteLine("--- H 카드 제출 (uid 11, 11, 12 | 행동 전환 | 11) ---");
+        foreach (var l in lines) Console.WriteLine("   " + l);
+        Console.WriteLine();
+
+        // I. 로거가 줄마다 종류·그룹을 제대로 붙이는가
+        var tagged = new List<string>();
+        logger.Mirror = (s, k, g, u) => tagged.Add($"{k}#{g}u{u} {Palette.Strip(s).Trim()}");
+        logger.MirrorNewPage = (r, g) => tagged.Add($"Page#{g} R{r}");
+        // PK 결과 (Battle {1: {1:id, 2:atk{1:pid}, 3:def{1:pid}, 5:isEnd}})
+        logger.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), Frame.Msg(1, Frame.Cat(
+            Frame.Fix64(1, 1), Frame.Msg(2, Frame.Fix64(1, 700)), Frame.Msg(3, Frame.Fix64(1, 701)),
+            Frame.Varint(5, 1))));
+        // PK가 원인인 HP 변화 두 줄
+        logger.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 700), Cause(12, 1),
+            HpEffect(701, 10, 7, -3, -3, 7, 10), HpEffect(700, 10, 9, -1, -1, 9, 10)));
+        // 스킬이 원인
+        logger.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 800), Cause(1, SkillId),
+            SkillEffect(800, 9200)));
+        // 라운드 전환
+        logger.OnFrame(new FrameHeader(Op.RoundStart, 0, 0, 0), Frame.Cat(Frame.Fix32(1, 3), Frame.Fix64(5, 700)));
+        Console.WriteLine("--- I 종류·그룹 태깅 ---");
+        foreach (var t in tagged) Console.WriteLine("   " + t);
+        Console.WriteLine();
+
+        int fails = 0;
+
+        // J. 카드 기록을 꺼도 오버레이 커서는 카드·제출 연출만큼 진행해야 한다
+        var hidden = new List<string>();
+        var adv = new List<string>();
+        var noCards = new BattleLogger(log, null, false, new HashSet<int>(), false, false, names);
+        noCards.Mirror = (s, k, g, u) => hidden.Add($"{k} {Palette.Strip(s).Trim()}");
+        noCards.MirrorAdvance = (k, g, u) => adv.Add(k.ToString());
+        noCards.OnFrame(new FrameHeader(Op.BattleUseCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 900), Frame.Fix32(2, 31)));
+        noCards.OnFrame(new FrameHeader(Op.BattleUseCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 901), Frame.Varint(3, 1)));
+        noCards.OnFrame(new FrameHeader(Op.UseEffectCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 902), Frame.Varint(8, 1), Frame.Fix64(9, SkillId)));
+        noCards.OnFrame(new FrameHeader(Op.UseEffectCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 900), Frame.Fix32(2, 42)));
+        noCards.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 900), Cause(2, 42),
+            HpEffect(903, 10, 7, -3, -3, 7, 10)));
+        Console.WriteLine("=== 카드 기록 끔 ===");
+        bool j1 = string.Join(",", adv) == "Submit,Submit,Card";
+        bool j2 = hidden.Exists(l => l.StartsWith("Skill ") && l.Contains("스킬 사용"));
+        bool j3 = !hidden.Exists(l => l.Contains("폭탄"));
+        Console.WriteLine($"  {(j1 ? "OK  " : "FAIL")} J1 카드·제출은 출력 없이 예약만: [{string.Join(",", adv)}]");
+        Console.WriteLine($"  {(j2 ? "OK  " : "FAIL")} J2 스킬 사용은 스킬 종류로 남는다");
+        Console.WriteLine($"  {(j3 ? "OK  " : "주의")} J3 카드 이름이 결과 머리줄로 새지 않는다");
+        foreach (var l in hidden) Console.WriteLine("       " + l);
+        Console.WriteLine();
+        if (!j1) fails++;
+        if (!j2) fails++;
+
+        // K. 화면 동기화 신호는 실측으로 화면 단계와 대응한 응답에만 붙는다.
+        //    하트비트처럼 화면과 무관한 응답까지 동기화로 보면 로그가 화면보다 먼저 나온다.
+        var sync = new List<string>();
+        var sl = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
+        sl.Mirror = (s, k, g, u) => { };
+        sl.MirrorClear = () => sync.Add("clear");
+        sl.MirrorSync = () => sync.Add("sync");
+        string SyncOf(int cmdId, long upSn)
+        {
+            sync.Clear();
+            sl.OnFrame(new FrameHeader(cmdId, 0, upSn, 0), Array.Empty<byte>());
+            return string.Join(",", sync);
+        }
+        Console.WriteLine("=== 화면 동기화 신호 ===");
+        var kCases = new (string Label, int Cmd, long Up, string Want)[]
+        {
+            ("TimeWasting(5308) 응답", Op.TimeWasting, 7, "sync"),
+            ("TimeWasting 방송(up=0)", Op.TimeWasting, 0, ""),
+            ("BattleUseCard(5036) 응답", Op.BattleUseCard, 7, "sync"),
+            ("BattleChoice(5040) 응답", Op.BattleChoice, 7, "sync"),
+            ("Heartbeat(5004) 응답", 5004, 7, ""),
+            ("RoundStart(1015) 응답", Op.RoundStart, 7, ""),
+        };
+        int kn = 0;
+        foreach (var c in kCases)
+        {
+            string res = SyncOf(c.Cmd, c.Up);
+            bool ok = res == c.Want;
+            Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} K{++kn} {c.Label} → [{res}]");
+            if (!ok) { fails++; Console.WriteLine($"       기대: [{c.Want}]"); }
+        }
+        Console.WriteLine();
+
+        fails += Sched.Run();
+
+        Console.WriteLine();
+        Console.WriteLine("=== 프레임 헤더 ===");
+        var rs = new FrameReassembler();
+        byte[] fr = new byte[35 + 3];
+        fr[3] = 3;                                    // LENGTH = 3
+        fr[12] = 0x04; fr[13] = 0x10;                 // CMDID = 1040
+        long up = 0x0102030405060708, down = 0x7F00000000000042;
+        for (int i = 0; i < 8; i++) { fr[17 + i] = (byte)(up >> (56 - 8 * i)); fr[25 + i] = (byte)(down >> (56 - 8 * i)); }
+        fr[33] = 0xFF; fr[34] = 0xFE;                 // ERR = -2
+        rs.Append(fr, 0, 20);
+        bool none = !rs.TryDequeue(out _, out _);
+        rs.Append(fr, 20, fr.Length - 20);
+        bool hgot = rs.TryDequeue(out FrameHeader fh, out byte[] fb);
+        bool hok = none && hgot && fh.CmdId == 1040 && fh.ErrId == -2 && fh.UpSn == up && fh.DownSn == down && fb.Length == 3;
+        Console.WriteLine($"  {(hok ? "OK  " : "FAIL")} H1 cmd={fh.CmdId} err={fh.ErrId} up=0x{fh.UpSn:X} down=0x{fh.DownSn:X} len={fb.Length}");
+        if (!hok) fails++;
+
+        Console.WriteLine();
+        Console.WriteLine("=== 파일 기록 (전용 스레드) ===");
+        string file = Path.Combine(dir, "battle-log-test.txt");
+        File.WriteAllText(file, "지난 판 내용\n");
+        var fl = new BattleLogger(log, file, false, new HashSet<int>(), false, true, names);
+        fl.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 1));            // 줄 1
+        fl.OnFrame(new FrameHeader(Op.StartGame, 0, 0, 0), Array.Empty<byte>());                  // 새 판 → 비우기
+        fl.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 2));            // 줄 2
+        for (int i = 0; i < 500; i++) fl.OnFrame(new FrameHeader(Op.ThrowDice, 0, 0, 0), Frame.Cat(Frame.Fix32(1, 3), Frame.Fix64(3, 2)));
+        fl.Close();
+        string[] got = File.ReadAllLines(file);
+        bool clean = got.Length == 501 && got[0].EndsWith("· ?2 행동 시작") && !Array.Exists(got, l => l.Contains("지난 판") || l.Contains("?1 행동"));
+        bool stamped = Array.TrueForAll(got, l => l.Length > 13 && l[2] == ':' && l[12] == ' ');
+        Console.WriteLine($"  {(clean ? "OK  " : "FAIL")} F1 비우기 뒤의 줄만 남고 순서 유지 ({got.Length}줄, 첫 줄: {got[0]})");
+        Console.WriteLine($"  {(stamped ? "OK  " : "FAIL")} F2 모든 줄에 시각이 찍힘");
+        if (!clean) fails++;
+        if (!stamped) fails++;
+        fl.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 3));   // 닫은 뒤: 예외 없이 무시
+        Console.WriteLine("  OK   F3 닫은 뒤 넣어도 예외 없음");
+        Environment.Exit(fails);
+    }
+}

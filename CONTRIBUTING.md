@@ -122,6 +122,27 @@ python tools/dump_tags.py <디컴파일루트> HeroBuffChangeS2C
 미리 보여주거나, 상대의 선택을 예측해 알려주는 기능은 목적 밖입니다. 이 모드는
 **이미 일어난 일을 읽기 좋게 적는 것**까지입니다.
 
+## 7. 게임 없이 도는 검증 하네스
+
+`tools/harness`는 플러그인 소스를 **그대로 링크해** 콘솔에서 돌리는 검증 도구입니다.
+합성 프레임을 넣어 디코더 출력을 보고, 표시 예약 큐는 시계를 직접 돌려 확인합니다.
+검증 대상과 배포 코드가 갈라질 수 없다는 점이 이 방식의 목적입니다.
+
+```bash
+dotnet run --project tools/harness/harness.csproj
+```
+
+`BepInEx.Core.dll`만 참조하므로 게임을 켤 필요가 없습니다. 경로가 다르면
+`-p:BepInExDir=<내 BepInEx 폴더>`로 넘기세요. 실패가 있으면 종료 코드가 실패 수가 됩니다.
+
+- `A`~`I`는 눈으로 보는 출력 예시입니다 (스킬 메아리, HP 필터, 카드 제출 중복, 종류·그룹 태깅).
+- `J`~`K`, `P`, `H1`, `F1`~`F3`은 자동 판정입니다 — 카드 기록 끔, 화면 동기화 신호 대상,
+  순차 재생, 프레임 헤더, 파일 기록 스레드.
+
+**타이밍·동기화나 디코더를 고치면 여기에 항목을 추가하세요.** 실게임 검증을 대신하지는
+못합니다. 표시 시점의 실제 정확도는 게임에서만 확인할 수 있습니다
+([OVERLAY-TIMING.md](docs/OVERLAY-TIMING.md)).
+
 ---
 
 ## PR 체크리스트
@@ -131,6 +152,7 @@ python tools/dump_tags.py <디컴파일루트> HeroBuffChangeS2C
 - [ ] `grep -rn 'Lookup("card"' --include='*.cs' Log`가 여전히 한 줄인가
 - [ ] 게임 자산(`names.tsv`, `*.dll`, 타입 목록)이 커밋에 섞이지 않았는가
 - [ ] 디코더를 고쳤다면 `tools/dump_tags.py`로 대조했는가
+- [ ] `dotnet run --project tools/harness/harness.csproj`가 실패 0으로 끝나는가
 - [ ] 단순한 흐름이나 표준 코드에 설명용 주석을 추가하지 않았는가
 - [ ] 복잡한 프로토콜 처리나 직관적이지 않은 안전 규칙에는 **왜 필요한지**를
       설명했는가

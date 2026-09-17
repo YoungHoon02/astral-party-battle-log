@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>harness</AssemblyName>
+    <RootNamespace>AstralPartyBattleLog.Harness</RootNamespace>
+
+    <SrcDir>$(MSBuildThisFileDirectory)..\..</SrcDir>
+    <!-- 본인 게임의 BepInEx 폴더 위치에 맞게 수정 (ManualLogSource만 쓴다) -->
+    <BepInExDir Condition="'$(BepInExDir)' == ''">D:\SteamLibrary\steamapps\common\Astral Party\8vJXnINT\BepInEx</BepInExDir>
+  </PropertyGroup>
+
+  <!-- Unity·IL2CPP에 의존하지 않는 소스만 링크한다. 플러그인 쪽 파일을 그대로 컴파일하므로
+       검증 대상과 실제 배포 코드가 갈라질 수 없다. -->
+  <ItemGroup>
+    <Compile Include="$(SrcDir)\Proto\ProtoReader.cs" />
+    <Compile Include="$(SrcDir)\Log\BattleLogger.cs" />
+    <Compile Include="$(SrcDir)\Log\NameTable.cs" />
+    <Compile Include="$(SrcDir)\Log\Roster.cs" />
+    <Compile Include="$(SrcDir)\Log\LandMap.cs" />
+    <Compile Include="$(SrcDir)\Log\Palette.cs" />
+    <Compile Include="$(SrcDir)\Log\Opcodes.cs" />
+    <Compile Include="$(SrcDir)\Log\LineKind.cs" />
+    <Compile Include="$(SrcDir)\Log\TimingTrace.cs" />
+    <Compile Include="$(SrcDir)\Log\LogFileWriter.cs" />
+    <Compile Include="$(SrcDir)\Net\FrameHeader.cs" />
+    <Compile Include="$(SrcDir)\Net\FrameReassembler.cs" />
+    <Compile Include="$(SrcDir)\UI\OverlaySchedule.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx.Core">
+      <HintPath>$(BepInExDir)\core\BepInEx.Core.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>
