@@ -137,8 +137,8 @@ internal static class LogOverlay
     private static bool _following = true;
 
     public static int MaxLines = 14;
-    public static int FontSize = 15;
     public static float Width = 780f;
+    public static int FontSize = 15;
     public static KeyCode ToggleKey = KeyCode.F9;
     public static int ScrollLines = 3;
 
@@ -164,8 +164,8 @@ internal static class LogOverlay
     {
         _log = log;
         MaxLines = Math.Max(1, maxLines);
+        Width = Math.Max(MinWidth, width);
         FontSize = Math.Max(8, fontSize);
-        Width = Math.Max(200f, width);
         ToggleKey = toggleKey;
         ScrollLines = Math.Max(1, scrollLines);
         _autoPlace = !(float.IsFinite(position.x) && float.IsFinite(position.y)
@@ -412,6 +412,18 @@ internal static class LogOverlay
         if (_panel is not null && !_dragging) ApplyPosition();
     }
 
+    private static float LineHeight() => FontSize * 1.45f;
+
+    private static float HeaderGap() => FontSize * 0.5f;
+
+    private static float HeightFor(int lines) => LineHeight() * lines + FontSize + HeaderGap() + PadY * 2f;
+
+    private static Vector2 CanvasSize()
+    {
+        float scale = CanvasScale();
+        return new Vector2(Screen.width / scale, Screen.height / scale);
+    }
+
     /// <summary>
     /// 화면 픽셀 → 캔버스 단위. <c>matchWidthOrHeight = 1</c>이면 CanvasScaler의 배율은
     /// 정확히 <c>Screen.height / 1080</c>이다. <c>canvas.scaleFactor</c>를 읽지 않는 이유:
@@ -426,31 +438,29 @@ internal static class LogOverlay
         _panel!.anchoredPosition = new Vector2(pos.x, -pos.y);
     }
 
-    /// <summary>저장된 위치가 없으면 최대 크기 창이 좌하단에서 24만큼 떨어지는 자리.</summary>
+    /// <summary>저장된 위치가 없으면 창이 화면 좌하단에서 24만큼 떨어지는 자리.</summary>
     private static Vector2 CurrentDesired()
     {
         if (!_autoPlace) return _desired;
         float canvasH = Screen.height / CanvasScale();
-        return new Vector2(DefaultMargin, canvasH - DefaultMargin - MaxPanelSize().y);
+        // 창이 자라도 좌상단이 흔들리지 않도록 최대 높이 기준으로 잡는다.
+        return new Vector2(DefaultMargin, canvasH - DefaultMargin - HeightFor(MaxLines));
     }
 
-    /// <summary>첫 로그의 양에 따라 기본 위치가 흔들리지 않도록 자동 배치는 최대 크기를 쓴다.</summary>
-    private static Vector2 MaxPanelSize()
-    {
-        float lineHeight = FontSize * 1.45f;
-        return new Vector2(Width, lineHeight * MaxLines + FontSize + PadY * 2f);
-    }
+    /// <summary>
+    /// 창 크기는 <see cref="Width"/> × <see cref="MaxLines"/>줄로 고정한다. 내용에 맞추면
+    /// 로그가 올 때마다 창이 커졌다 작아져 읽기 어렵다.
+    /// </summary>
+    private static Vector2 PanelSize() => new(Width, HeightFor(MaxLines));
 
     /// <summary>창이 화면보다 커져도 다시 끌 수 있도록 그립이 있는 위쪽과 왼쪽을 살린다.</summary>
     private static Vector2 ClampToScreen(Vector2 pos)
     {
-        float scale = CanvasScale();
-        Vector2 size = _panel is null ? MaxPanelSize() : _panel.sizeDelta;
-        float canvasW = Screen.width / scale;
-        float canvasH = Screen.height / scale;
+        Vector2 size = PanelSize();
+        Vector2 canvas = CanvasSize();
 
-        float x = Math.Max(0f, Math.Min(pos.x, canvasW - size.x));
-        float y = Math.Max(0f, Math.Min(pos.y, canvasH - size.y));
+        float x = Math.Max(0f, Math.Min(pos.x, canvas.x - size.x));
+        float y = Math.Max(0f, Math.Min(pos.y, canvas.y - size.y));
         return new Vector2(x, y);
     }
 
@@ -566,26 +576,6 @@ internal static class LogOverlay
         _header.text = $"Round {page.Round}{position}{hint}";
 
         _text.text = string.Join("\n", page.Lines.Skip(_offset).Take(MaxLines));
-        Resize(shown);
-    }
-
-    /// <summary>
-    /// 창을 내용에 맞춘다. 즉 <see cref="Width"/>는 <b>고정 폭이 아니라 최대 폭</b>이고
-    /// 그보다 긴 줄은 넘쳐 흐른다 — 줄바꿈을 켜면 스크롤이 세는 논리 줄 수와 화면에
-    /// 그려지는 줄 수가 어긋난다. 커진 창이 화면 밖으로 나가지 않도록 크기를 바꾼 뒤
-    /// 표시 위치만 다시 보정한다. 사용자가 둔 위치는 유지하므로 다시 작아지면 돌아간다.
-    /// </summary>
-    private static void Resize(int shownLines)
-    {
-        if (_panel is null || _text is null || _header is null) return;
-
-        float lineHeight = FontSize * 1.45f;
-        float content = Math.Max(_header.preferredWidth + HeaderLeft + PadX,
-                                 _text.preferredWidth + PadX * 2f);
-        _panel.sizeDelta = new Vector2(
-            Math.Clamp(content, MinWidth, Width),
-            lineHeight * Math.Max(shownLines, 1) + FontSize + PadY * 2f);
-        ApplyPosition();
     }
 
     private static void Create()
@@ -605,15 +595,14 @@ internal static class LogOverlay
         // 안 길어져서 빈 배경이 넓어진다.
         scaler.matchWidthOrHeight = 1f;
 
-        // 초기 크기는 임시값이다. 첫 Render가 내용에 맞춰 다시 잡는다 (Resize).
-        float lineHeight = FontSize * 1.45f;
-        float height = lineHeight * MaxLines + FontSize + PadY * 2f;
-
         var panel = new GameObject("Panel");
         panel.transform.SetParent(_root.transform, false);
         Image background = panel.AddComponent<Image>();
         background.color = new Color(0.02f, 0.03f, 0.06f, 0.62f);
         background.raycastTarget = false;
+        // 창 크기가 고정이라 긴 줄은 경계에서 잘라야 한다. 줄바꿈은 스크롤이 세는 논리 줄
+        // 수와 그려지는 줄 수를 어긋나게 하므로 쓰지 않는다.
+        panel.AddComponent<RectMask2D>();
 
         // Graphic을 붙이면 RectTransform이 자동으로 생긴다. Unity 객체는 "가짜 null"이라
         // ?? 널 병합이 제대로 안 먹으므로 직접 캐스팅한다.
@@ -622,7 +611,7 @@ internal static class LogOverlay
         rect.anchorMin = new Vector2(0f, 1f);
         rect.anchorMax = new Vector2(0f, 1f);
         rect.pivot = new Vector2(0f, 1f);
-        rect.sizeDelta = new Vector2(Width, height);
+        rect.sizeDelta = PanelSize();
         ApplyPosition();
 
         CreateGrip(panel, FontSize);
@@ -636,13 +625,13 @@ internal static class LogOverlay
         headerRect.offsetMin = new Vector2(HeaderLeft, -FontSize - PadY);
         headerRect.offsetMax = new Vector2(-PadX, -PadY);
 
-        _text = AddText(panel, "Lines", TextAnchor.LowerLeft,
+        _text = AddText(panel, "Lines", TextAnchor.UpperLeft,
                         new Color(0.93f, 0.96f, 1f, 0.92f));
         RectTransform textRect = _text.transform.TryCast<RectTransform>()!;
         textRect.anchorMin = Vector2.zero;
         textRect.anchorMax = Vector2.one;
         textRect.offsetMin = new Vector2(PadX, PadY);
-        textRect.offsetMax = new Vector2(-PadX, -FontSize - PadY);
+        textRect.offsetMax = new Vector2(-PadX, -FontSize - HeaderGap() - PadY);
 
         _root.SetActive(_visible);
         _log?.LogInfo($"Overlay ready. {ToggleKey} toggles it; scroll with the mouse wheel; drag the grip to move it.");

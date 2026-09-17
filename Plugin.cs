@@ -51,13 +51,14 @@ public class Plugin : BasePlugin
             "Overlay", "Enabled", true,
             "전투 로그를 게임 화면에 겹쳐 보여준다.");
         ConfigEntry<int> overlayLines = Config.Bind(
-            "Overlay", "Lines", 14, "오버레이에 유지할 줄 수.");
+            "Overlay", "Lines", 14,
+            "오버레이 창 높이(보이는 줄 수). 창 크기는 이 값과 Width로 고정된다.");
         ConfigEntry<int> overlayFontSize = Config.Bind(
             "Overlay", "FontSize", 15, "오버레이 글자 크기.");
         ConfigEntry<int> overlayWidth = Config.Bind(
-            "Overlay", "Width", 780,
-            "오버레이 **최대** 가로 폭(1920 기준). 창은 가장 긴 줄에 맞춰 줄어들고, " +
-            "이 값을 넘는 줄만 넘쳐 흐른다.");
+            "Overlay", "Width", 460,
+            "오버레이 창 가로 폭(화면 높이 1080 기준). 창 크기는 이 값과 Lines로 고정되고, " +
+            "이보다 긴 줄은 창 경계에서 잘린다.");
         ConfigEntry<string> overlayKey = Config.Bind(
             "Overlay", "ToggleKey", "F9",
             "오버레이를 켜고 끄는 키. UnityEngine.KeyCode 이름을 쓴다 (F9, BackQuote 등).");
@@ -139,7 +140,7 @@ public class Plugin : BasePlugin
             LogOverlay.Init(Log, overlayLines.Value, overlayFontSize.Value, overlayWidth.Value,
                             toggle, scrollLines.Value,
                             new Vector2(overlayX.Value, overlayY.Value),
-                            pos => SavePosition(overlayX, overlayY, pos));
+                            pos => SaveTogether(() => { overlayX.Value = pos.x; overlayY.Value = pos.y; }));
             OverlaySchedule.Init(Log, syncAnimation.Value, syncOffsetMs.Value, syncMaxDelayMs.Value,
                                  traceTiming.Value,
                                  Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "overlay-timing.tsv"));
@@ -174,15 +175,14 @@ public class Plugin : BasePlugin
         if (path is not null) Log.LogInfo($"Battle log file: {path}");
     }
 
-    /// <summary>X와 Y를 따로 대입하면 파일을 두 번 쓰므로 자동 저장을 잠시 끄고 한 번에 쓴다.</summary>
-    private void SavePosition(ConfigEntry<float> x, ConfigEntry<float> y, Vector2 pos)
+    /// <summary>값 두 개를 따로 대입하면 파일을 두 번 쓰므로 자동 저장을 잠시 끄고 한 번에 쓴다.</summary>
+    private void SaveTogether(Action assign)
     {
         bool auto = Config.SaveOnConfigSet;
         Config.SaveOnConfigSet = false;
         try
         {
-            x.Value = pos.x;
-            y.Value = pos.y;
+            assign();
         }
         finally
         {
