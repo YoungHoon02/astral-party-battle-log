@@ -98,7 +98,7 @@ internal static class OverlaySchedule
     private static long _maxDelayUs;
     private static ManualLogSource? _log;
 
-    public static bool TraceTiming { get; private set; }
+    public static bool TraceTiming => TimingTrace.Enabled;
 
     public static void Init(ManualLogSource log, bool enabled, int offsetMs, int maxDelayMs,
                             bool traceTiming, string profilePath)
@@ -107,7 +107,7 @@ internal static class OverlaySchedule
         _enabled = enabled;
         _offsetUs = offsetMs * 1000L;
         _maxDelayUs = Math.Max(0, maxDelayMs) * 1000L;
-        TraceTiming = traceTiming;
+        TimingTrace.Init(log, traceTiming);
         LoadProfile(profilePath);
     }
 
@@ -300,8 +300,9 @@ internal static class OverlaySchedule
 
         if (!TraceTiming || item.Group == _lastTracedGroup) return;
         _lastTracedGroup = item.Group;
-        _log?.LogInfo($"[timing] show kind={item.Kind.ToString().ToLowerInvariant()} planned={(s.DueUs - item.ReceivedUs) / 1000}ms "
-                      + $"waited={(now - item.ReceivedUs) / 1000}ms speed={item.Speed:0.##}");
+        TimingTrace.Write($"show kind={item.Kind.ToString().ToLowerInvariant()} "
+                          + $"planned={(s.DueUs - item.ReceivedUs) / 1000}ms "
+                          + $"waited={(now - item.ReceivedUs) / 1000}ms speed={item.Speed:0.##}");
     }
 
     /// <summary>
@@ -312,13 +313,13 @@ internal static class OverlaySchedule
     {
         long now = _nowUs;
         var sb = new StringBuilder();
-        sb.Append($"[timing] mark speed={Volatile.Read(ref _speed):0.##}");
+        sb.Append($"mark speed={Volatile.Read(ref _speed):0.##}");
         for (int k = 0; k < KindCount; k++)
         {
             long received = LastReceivedUs[k];
             if (received <= 0 || now - received > 20_000_000) continue;
             sb.Append($" {((LineKind)k).ToString().ToLowerInvariant()}={(now - received) / 1000}ms");
         }
-        _log?.LogInfo(sb.ToString());
+        TimingTrace.Write(sb.ToString());
     }
 }

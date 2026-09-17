@@ -35,7 +35,7 @@ internal static class SocketTap
     private static readonly Dictionary<IntPtr, FrameReassembler> Streams = new();
 
     /// <summary>소켓 IO 스레드에서 불린다.</summary>
-    public static Action<int, int, byte[]>? OnFrame;
+    public static Action<FrameHeader, byte[]>? OnFrame;
 
     internal static MethodBase FindBeginReceive() =>
         typeof(Il2CppSocket)
@@ -89,9 +89,9 @@ internal static class SocketTap
         lock (Gate)
         {
             stream.Append(managed, 0, received);
-            while (stream.TryDequeue(out int cmdId, out int errId, out byte[] body))
+            while (stream.TryDequeue(out FrameHeader header, out byte[] body))
             {
-                try { OnFrame?.Invoke(cmdId, errId, body); }
+                try { OnFrame?.Invoke(header, body); }
                 catch { /* 로깅 실패가 게임을 막으면 안 된다 */ }
             }
         }

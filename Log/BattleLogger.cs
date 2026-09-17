@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using AstralPartyBattleLog.Net;
 using AstralPartyBattleLog.Proto;
 using BepInEx.Logging;
 
@@ -156,8 +157,16 @@ internal sealed class BattleLogger
     private static bool IsNumber(int wire) =>
         wire == ProtoReader.WireVarint || wire == ProtoReader.WireFixed32 || wire == ProtoReader.WireFixed64;
 
-    public void OnFrame(int cmdId, int errId, byte[] body)
+    public void OnFrame(FrameHeader header, byte[] body)
     {
+        int cmdId = header.CmdId;
+        int errId = header.ErrId;
+
+        // 헤더만 남긴다(본문은 해석하지 않는다). up이 0이 아니면 우리 요청에 대한 응답이다.
+        if (TimingTrace.Enabled)
+            TimingTrace.Write($"frame cmd={cmdId} {Op.Name(cmdId)} up={header.UpSn} "
+                              + $"down={header.DownSn} err={errId} len={body.Length}");
+
         // 짝 없는 골드 줄(상점 지출 등)이 영영 안 나오는 걸 막는 안전장치.
         if (_goldHold is { } waiting && DateTime.UtcNow - waiting.At > GoldPairWindow) FlushGold();
 
@@ -490,6 +499,11 @@ internal sealed class BattleLogger
         }
 
         // 전투가 진행되는 동안 같은 battleId로 여러 번 온다. 확정된 것만 남긴다.
+        if (TimingTrace.Enabled)
+            TimingTrace.Write($"battle id={battleId} end={isEnd} "
+                              + $"{Palette.Strip(_roster.Name(attacker.PlayerId))} vs "
+                              + $"{Palette.Strip(_roster.Name(defender.PlayerId))} pursuit={isPursuit} back={fightBack}");
+
         if (isEnd == 0)
         {
             if (_traceUnknown) Diag($"battle #{battleId} in progress, len={body.Length}");

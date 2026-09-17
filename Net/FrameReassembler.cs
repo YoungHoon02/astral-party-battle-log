@@ -48,10 +48,9 @@ internal sealed class FrameReassembler
         _len += count;
     }
 
-    public bool TryDequeue(out int cmdId, out int errId, out byte[] body)
+    public bool TryDequeue(out FrameHeader header, out byte[] body)
     {
-        cmdId = 0;
-        errId = 0;
+        header = default;
         body = Array.Empty<byte>();
         if (Rejected || _len < HeaderLength) return false;
 
@@ -66,8 +65,8 @@ internal sealed class FrameReassembler
         int total = HeaderLength + bodyLen;
         if (_len < total) return false;
 
-        cmdId = ReadUInt16BE(_buf, 12);
-        errId = (short)ReadUInt16BE(_buf, 33);
+        header = new FrameHeader(ReadUInt16BE(_buf, 12), (short)ReadUInt16BE(_buf, 33),
+                                 ReadInt64BE(_buf, 17), ReadInt64BE(_buf, 25));
         body = new byte[bodyLen];
         Buffer.BlockCopy(_buf, HeaderLength, body, 0, bodyLen);
 
@@ -78,6 +77,9 @@ internal sealed class FrameReassembler
 
     private static int ReadInt32BE(byte[] b, int i) =>
         (b[i] << 24) | (b[i + 1] << 16) | (b[i + 2] << 8) | b[i + 3];
+
+    private static long ReadInt64BE(byte[] b, int i) =>
+        ((long)ReadInt32BE(b, i) << 32) | (uint)ReadInt32BE(b, i + 4);
 
     private static int ReadUInt16BE(byte[] b, int i) =>
         (b[i] << 8) | b[i + 1];
