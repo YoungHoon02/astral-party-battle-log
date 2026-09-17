@@ -81,7 +81,8 @@ if (SpeedsDiffer(Time.timeScale, target)) Time.timeScale = target;
 ```
 
 그래서 다른 모드의 내부 필드를 리플렉션할 필요가 없다. 모드가 없으면 1이고, 배속 제외
-씬에서는 AnimSpeedMod가 1로 되돌린다.
+씬에서는 AnimSpeedMod가 1로 되돌린다. **게임 자체의 방 속도 설정은 이 값에 드러나지
+않는다** — [알려진 한계](#알려진-한계).
 
 - `Time.deltaTime`에서 역산하지 않는다 — 프레임 저하와 배속을 구분할 수 없다.
 - 유한하고 0.25~10 사이가 아니면 1로 본다. 이 범위는 측정값이 아니라 안전장치다
@@ -248,6 +249,14 @@ dice	1500	fixed
   더 오래 기다린다. `SyncMaxDelayMs`에서 잘린다.
 - 게임이 `timeScale = 0`으로 멈추는 일이 있으면 프레임 시계는 계속 흐르므로 그동안
   줄이 먼저 풀린다. 온라인 게임이라 없을 것으로 보지만 확인하지 않았다.
+- **게임 자체의 방 속도 설정은 반영하지 않는다.** 게임은 `timeScale`을 쓰지 않고
+  `Room.SpeedType`(필드 40)으로 설정표(`ChoosingTimeLimit` gamespeed)를 찾아
+  `AnimSpeed`/`DiceSpeed`/`PerformSpeed`/`VfxSpeed`를 분야별로 따로 적용한다
+  (`GameLogic/BattleConfig`). 빠른 방에서는 연출이 빨라지는데 여기서는 1배속으로 계산하므로
+  **로그가 연출보다 늦게** 뜬다. 필요해지면 위 필드와 설정표를 읽어 종류별 배율로 곱하면
+  된다 — 측정 프로필은 기본 속도 방 기준이다.
+  게임 코드에서 `Time.timeScale`을 직접 바꾸는 곳은 개발자용 `UI/GMWindow` 하나뿐이다.
+- 애니메이터 속도만 바꾸고 `timeScale`은 두는 다른 배속 모드도 감지하지 못한다.
 
 ## 검증 상태
 
