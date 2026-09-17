@@ -121,7 +121,7 @@ public class Plugin : BasePlugin
             "재생하므로 봇 차례가 이어지면 화면이 수십 초 뒤처진다. 파일 로그는 영향이 없다.");
         ConfigEntry<int> syncMaxLagMs = Config.Bind(
             "Overlay", "SyncMaxLagMs", 60000,
-            "화면이 수신보다 뒤처졌다고 볼 수 있는 최대 시간(밀리초). 이보다 늦게 나오는 줄은 없다. " +
+            "화면 재생 덩어리가 수신보다 뒤처져 시작할 수 있는 최대 시간(밀리초). " +
             "실측 최대 지연은 약 37초였다.");
         ConfigEntry<bool> traceTiming = Config.Bind(
             "Diagnostics", "TraceTiming", false,
@@ -141,6 +141,7 @@ public class Plugin : BasePlugin
                             pos => SaveTogether(() => { overlayX.Value = pos.x; overlayY.Value = pos.y; }));
             OverlaySchedule.Init(Log, syncAnimation.Value, syncMaxLagMs.Value, traceTiming.Value);
             logger.Mirror = OverlaySchedule.Line;
+            logger.MirrorAdvance = OverlaySchedule.Advance;
             logger.MirrorNewPage = OverlaySchedule.Page;
             logger.MirrorClear = OverlaySchedule.Reset;
             logger.MirrorSync = OverlaySchedule.Sync;

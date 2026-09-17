@@ -25,7 +25,7 @@ namespace AstralPartyBattleLog.UI;
 /// </summary>
 internal static class OverlaySchedule
 {
-    private enum Signal { Line, Page, Clear, Sync }
+    private enum Signal { Line, Page, Clear, Sync, Advance }
 
     private readonly struct Item
     {
@@ -61,8 +61,7 @@ internal static class OverlaySchedule
         }
     }
 
-    // 1배속 연출 길이(마이크로초). 봇전 세 판(관측 20개)의 화면 시각에 재생 모델을 맞춘 값이다
-    // — 평균 오차 1.45초, 최대 2.77초. 한 칸 이동만 내 이동 구간에서 직접 읽었다.
+    // 1배속 연출 길이(마이크로초). 봇전 세 판(관측 20개)의 화면 시각에 재생 모델을 맞춘 값이다.
     private const long CardUs = 2_870_000;
     private const long SubmitUs = 2_230_000;
     private const long AttackUs = 9_450_000;
@@ -139,6 +138,9 @@ internal static class OverlaySchedule
     /// <param name="units">주사위·추가 이동의 칸 수. 그 밖에는 0.</param>
     public static void Line(string text, LineKind kind, long group, int units) =>
         Push(Signal.Line, kind, group, units, text, 0);
+
+    public static void Advance(LineKind kind, long group, int units) =>
+        Push(Signal.Advance, kind, group, units, null, 0);
 
     public static void Page(int round, long group) =>
         Push(Signal.Page, LineKind.Round, group, 0, null, round);
@@ -270,6 +272,7 @@ internal static class OverlaySchedule
             case Signal.Line: line(item.Text!); break;
             case Signal.Page: page(item.Round); break;
             case Signal.Clear: clear(); break;
+            case Signal.Advance: return;
             case Signal.Sync:
                 TimingTrace.Write($"sync waited={(now - item.ReceivedUs) / 1000}ms");
                 return;

@@ -25,6 +25,7 @@ internal sealed class BattleLogger
 
     /// <summary>출력 대상을 델리게이트로 받는다 — 이 클래스가 UI를 몰라도 되게.</summary>
     public Action<string, LineKind, long, int>? Mirror;
+    public Action<LineKind, long, int>? MirrorAdvance;
     public Action<int, long>? MirrorNewPage;
     public Action? MirrorClear;
     public Action? MirrorSync;
@@ -184,9 +185,8 @@ internal sealed class BattleLogger
         _units = 0;
         _kindFromCause = cmdId == Op.UpdateHeroAttr;
 
-        // 우리 요청에 대한 응답이다. 사용자는 결정 창을 보고서야 요청을 보낼 수 있으므로 화면이
-        // 여기까지 따라와 있다. 하트비트만 화면과 무관하게 주기적으로 온다.
-        if (header.UpSn != 0 && cmdId != Op.Heartbeat) MirrorSync?.Invoke();
+        // 모든 응답이 사용자 입력은 아니다. 실측에서 화면 단계와 대응한 응답만 동기화한다.
+        if (header.UpSn != 0 && Op.TimingSync.Contains(cmdId)) MirrorSync?.Invoke();
 
         if (Op.GameEntry.Contains(cmdId))
         {
@@ -376,7 +376,6 @@ internal sealed class BattleLogger
     // 공개 전에는 cardId가 0으로 오므로 0 이하는 버린다.
     private void DecodeBattleUseCard(byte[] body)
     {
-        if (!_logCards) return;
         long pid = 0, cardId = 0, noCard = 0;
         var r = new ProtoReader(body, 0, body.Length);
         while (r.NextField(out int field, out int wire))
@@ -394,9 +393,17 @@ internal sealed class BattleLogger
         // 반복 방송인지 다른 카드인지 가리려면 uid가 필요하므로 진단으로만 남긴다.
         if (_traceUnknown) Diag($"battle-card pid={pid} cardUid={cardId} noCard={noCard}");
 
-        if (noCard != 0) { Emit($"[R{_round}] {_roster.Name(pid)} 카드 안 냄"); return; }
+        if (noCard != 0)
+        {
+            if (_logCards) Emit($"[R{_round}] {_roster.Name(pid)} 카드 안 냄");
+            else AdvanceOverlay(_kind);
+            return;
+        }
         if (cardId > 0 && _cardSubmits.Add((pid, cardId)))
-            Emit($"[R{_round}] {_roster.Name(pid)} 카드 제출");
+        {
+            if (_logCards) Emit($"[R{_round}] {_roster.Name(pid)} 카드 제출");
+            else AdvanceOverlay(_kind);
+        }
     }
 
     // UseSkill(8)로 카드와 스킬이 갈린다. cardId만 보고 버리면 스킬 사용이 통째로 사라진다.
@@ -432,8 +439,8 @@ internal sealed class BattleLogger
             var skill = new StringBuilder($"[R{_round}] {_roster.Name(pid)} 스킬 사용");
             if (_names.Lookup("skill", skillId) is { } name) skill.Append($" \"{name}\"");
             AppendTargets(skill, targets);
-            Emit(skill.ToString());
             _kind = LineKind.Skill;
+            Emit(skill.ToString());
             _saidSkillUse = pid;   // LandBuffs 추측이 같은 말을 반복하지 않게
             _activeSkillId = skillId;
             _activeSkillCaster = pid;
@@ -442,7 +449,8 @@ internal sealed class BattleLogger
             return;
         }
 
-        if (!_logCards || cardId <= 0) return;
+        if (cardId <= 0) return;
+        if (!_logCards) { AdvanceOverlay(_kind); return; }
         var sb = new StringBuilder($"[R{_round}] {_roster.Name(pid)} 효과카드 {CardLabel(cardId)}");
         AppendTargets(sb, targets);
         Emit(sb.ToString());
@@ -1488,6 +1496,11 @@ internal sealed class BattleLogger
     /// 진단용 출력은 반대로 거기로만 간다 (<see cref="Diag"/>).
     /// </summary>
     private void EmitLine(string line) => EmitLine(line, _kind, _group, _units);
+
+    private void AdvanceOverlay(LineKind kind)
+    {
+        try { MirrorAdvance?.Invoke(kind, _group, _units); } catch { }
+    }
 
     private void EmitLine(string line, LineKind kind, long group, int units = 0)
     {
