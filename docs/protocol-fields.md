@@ -48,6 +48,13 @@ python tools/dump_tags.py <디컴파일루트> HeroHpChangeS2C
 | `HeroHpChangeS2C`(1040 안) | 화면 숫자는 `RealChangeHp`, 실제 HP는 `RealHp`(0이면 `HP + RealChangeHp`) — `BattleProperty.OnLifeChanged` |
 | 〃 | **만피에서 회복을 받아도 `RealChangeHp`가 0이 아니다** (실측 10건, 전부 `CurrHp == MaxHp`). `CurrHp`와 `RealHp` 중 무엇이 화면 HP인지는 미확정 |
 | `HeroBuffChangeS2C` | 한 메시지에 동일한 스킬·대상 버프가 여러 번 들어올 수 있다. 대상이 다르면 각각 남기고, 같은 `(스킬, 대상)`만 중복 제거한다 |
+| `TimeWastingS2C`(5308) | 결정 창 열림·닫힘 때 응답으로 온다. 측정 3에서 `UPSN != 0`, 본문 길이는 열림 14바이트·닫힘 9바이트였다. 동기화에는 헤더만 사용하고 본문은 해석하지 않는다 |
+| `HeartbeatS2C`(5004) | 주기적인 응답이라 `UPSN != 0`이어도 화면 동기화 근거가 아니다. 본문을 해석하거나 허용목록에 넣지 않는다 |
+
+프레임 헤더의 `UPSN`은 우리 요청에 대응하는 응답 번호다(`FrameReassembler`가 읽는다).
+오버레이는 5004를 제외한 `UPSN != 0` 응답을 화면 동기화 신호로 사용한다. 이 값은
+**사용자 입력 자체를 증명하지 않는다.** 다른 자동 요청에 대한 응답까지 포함될 가능성은
+실게임에서 확인해야 한다. 이 검사는 본문 디코딩 범위와 `Op.Allowed`를 바꾸지 않는다.
 
 ## 표
 
