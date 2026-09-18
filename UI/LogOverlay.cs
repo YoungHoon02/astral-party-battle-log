@@ -143,10 +143,8 @@ internal static class LogOverlay
     /// </summary>
     private const float WidthMargin = HeaderLeft + PadX;
 
-    /// <summary>글자 크기당 텍스트 폭(px). 실측 필요폭(619px @ FontSize 22)에서 본문 여백
-    /// (PadX×2=24)을 뺀 (619-24)/22 ≈ 27.05에 여유를 두고 28로 잡았다 — 못 본 더 긴
-    /// 줄(카드·PK 결과 등)은 반영 못했으니 잠정값이다.</summary>
-    private const float TextWidthPerFontSize = 28f;
+    /// <summary>긴 스킬 PK 줄이 기존 폭에서 잘려 여유를 늘렸다. 폴백 폰트는 별도 실측이 필요하다.</summary>
+    private const float TextWidthPerFontSize = 32f;
 
     public static int MaxLines = 14;
     public static int FontSize = 15;

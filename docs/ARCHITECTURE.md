@@ -360,13 +360,12 @@ python tools/extract_names.py gamedata names.tsv
   포함)이 이미 섞여 있는데, 그건 폰트 크기와 무관한 고정값이다. 단일 배수로 두면
   FontSize가 작아질수록 이 여백까지 같이 줄어들어, 최소 허용치인 FontSize 8에서
   실제 필요 폭(약 240px)보다 패널이 좁아져(232px) 잘릴 수 있었다. 그래서 지금은
-  `Width = FontSize * TextWidthPerFontSize(28) + WidthMargin(HeaderLeft+PadX=42)`로
+  `Width = FontSize * TextWidthPerFontSize(32) + WidthMargin(HeaderLeft+PadX=42)`로
   비례항과 고정 여백을 분리한다 — `HeightFor`가 `LineHeight() * lines` (비례) +
   `PadY * 2` (고정)로 나뉜 것과 같은 구조다. `Overlay.Width` 설정은 없고, 폭은
   `FontSize`에서 자동 계산된다 — 폰트를 키우면 폭도 같이 커진다.
-  **이 상수들은 3라운드짜리 표본 하나에서 나온 잠정값**이다. 카드 공개, PK 결과,
-  5인 파티 조합 등 더 긴 줄은 아직 못 봤다 — 넘치면 `RectMask2D`가 조용히 잘라서
-  깨지지는 않지만, 더 긴 표본이 나오면 `TextWidthPerFontSize`를 올려야 할 수 있다.
+  초기 계수 28은 3라운드 표본에서 잡았고, 긴 스킬 PK 줄이 잘리는 실게임 화면을
+  확인한 뒤 32로 올렸다. 다른 긴 줄이 넘치면 `RectMask2D`가 조용히 자른다.
   폴백 폰트(`Afacad-Regular`를 못 찾아 `Arial.ttf`로 갈 때, `ResolveFont`/
   `RefreshFont` 참고)로 넘어가면 글자 폭 자체가 달라져 이 계수가 안 맞을 수 있는데,
   아직 그 화면에서 실측하지 않았다. 크기 조절 손잡이와 "넓어지기만 하는 폭"도

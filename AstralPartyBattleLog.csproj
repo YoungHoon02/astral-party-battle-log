@@ -6,11 +6,15 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>0.1.6</Version>
+    <Version>0.1.8</Version>
 
     <!-- 본인 게임의 BepInEx 폴더 위치에 맞게 수정 -->
     <BepInExDir>D:\SteamLibrary\steamapps\common\Astral Party\8vJXnINT\BepInEx</BepInExDir>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="tools\**\*.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- BepInEx 코어 / IL2CPP 런타임 -->
