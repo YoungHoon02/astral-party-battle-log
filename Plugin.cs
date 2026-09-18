@@ -52,13 +52,10 @@ public class Plugin : BasePlugin
             "전투 로그를 게임 화면에 겹쳐 보여준다.");
         ConfigEntry<int> overlayLines = Config.Bind(
             "Overlay", "Lines", 14,
-            "오버레이 창 높이(보이는 줄 수). 창 크기는 이 값과 Width로 고정된다.");
+            "오버레이 창 높이(보이는 줄 수). 가로 폭은 FontSize에 비례해 자동으로 정해진다.");
         ConfigEntry<int> overlayFontSize = Config.Bind(
-            "Overlay", "FontSize", 15, "오버레이 글자 크기.");
-        ConfigEntry<int> overlayWidth = Config.Bind(
-            "Overlay", "Width", 460,
-            "오버레이 창 가로 폭(화면 높이 1080 기준). 창 크기는 이 값과 Lines로 고정되고, " +
-            "이보다 긴 줄은 창 경계에서 잘린다.");
+            "Overlay", "FontSize", 15,
+            "오버레이 글자 크기. 창 가로 폭도 이 값에 비례해 같이 커지고 작아진다.");
         ConfigEntry<string> overlayKey = Config.Bind(
             "Overlay", "ToggleKey", "F9",
             "오버레이를 켜고 끄는 키. UnityEngine.KeyCode 이름을 쓴다 (F9, BackQuote 등).");
@@ -135,7 +132,7 @@ public class Plugin : BasePlugin
                 Log.LogWarning($"Unknown ToggleKey '{overlayKey.Value}'; falling back to F9.");
                 toggle = KeyCode.F9;
             }
-            LogOverlay.Init(Log, overlayLines.Value, overlayFontSize.Value, overlayWidth.Value,
+            LogOverlay.Init(Log, overlayLines.Value, overlayFontSize.Value,
                             toggle, scrollLines.Value,
                             new Vector2(overlayX.Value, overlayY.Value),
                             pos => SaveTogether(() => { overlayX.Value = pos.x; overlayY.Value = pos.y; }));

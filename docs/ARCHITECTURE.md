@@ -348,13 +348,29 @@ python tools/extract_names.py gamedata names.tsv
 - Unity 객체는 "가짜 null"이라 `??` 널 병합이 제대로 동작하지 않는다.
   `transform.TryCast<RectTransform>()`처럼 interop 방식으로 가져올 것.
 - `raycastTarget = false` — 오버레이가 게임 클릭을 가로채면 안 된다.
-- **창 크기는 `Width` × `Lines`로 고정이다 (기본 460 × 14줄).** 한때 매번 내용에
+- **창 크기는 `FontSize` × 배수로 고정이다 — 높이도 폭도.** 한때 매번 내용에
   맞췄더니(`Resize(shown)`) 로그가 올 때마다 창이 커졌다 작아져서 읽기 어렵다는 요청이
-  있었다. 예전 "최대 폭" 기본값 780을 그대로 고정 폭으로 쓰면 너무 넓어서, 게임에서
-  몇 가지 폭을 비교해 460을 골랐다. 한 판 로그로 추정하면 가장 긴 줄(추격 태그가 붙은
-  PK 줄)이 약 450이다. 기존 설정 파일의 780은 사용자가 고른 값과 옛 기본값을 구분할 수
-  없어 그대로 둔다. 크기 조절 손잡이와 "넓어지기만
-  하는 폭"도 검토했지만 넣지 않았다.
+  있었다. 처음엔 높이만 `FontSize` 배수(`LineHeight = FontSize * 1.45`)로 고정하고
+  폭은 별도 `Overlay.Width` 설정값(고정 상수)으로 뒀는데, 폰트 크기를 키우면 그
+  상수가 안 따라와 줄이 잘리는 문제가 있었다. 그래서 런타임에 실제 렌더 폭
+  (`Text.preferredWidth`)이 얼마나 필요한지 임시 진단 로그(`[width-probe]`)로
+  한 판(3라운드까지) 재봤더니 FontSize 22에서 최대 619px(비율 28.15)이 나왔다.
+  **`29`(단일 배수)로 정했다가 리뷰에서 문제를 지적받아 고쳤다**: 실측값 619엔 본문
+  좌우 여백(`PadX × 2 = 24`) 또는 헤더 왼쪽 여백(`HeaderLeft + PadX = 42`, 그립 자리
+  포함)이 이미 섞여 있는데, 그건 폰트 크기와 무관한 고정값이다. 단일 배수로 두면
+  FontSize가 작아질수록 이 여백까지 같이 줄어들어, 최소 허용치인 FontSize 8에서
+  실제 필요 폭(약 240px)보다 패널이 좁아져(232px) 잘릴 수 있었다. 그래서 지금은
+  `Width = FontSize * TextWidthPerFontSize(28) + WidthMargin(HeaderLeft+PadX=42)`로
+  비례항과 고정 여백을 분리한다 — `HeightFor`가 `LineHeight() * lines` (비례) +
+  `PadY * 2` (고정)로 나뉜 것과 같은 구조다. `Overlay.Width` 설정은 없고, 폭은
+  `FontSize`에서 자동 계산된다 — 폰트를 키우면 폭도 같이 커진다.
+  **이 상수들은 3라운드짜리 표본 하나에서 나온 잠정값**이다. 카드 공개, PK 결과,
+  5인 파티 조합 등 더 긴 줄은 아직 못 봤다 — 넘치면 `RectMask2D`가 조용히 잘라서
+  깨지지는 않지만, 더 긴 표본이 나오면 `TextWidthPerFontSize`를 올려야 할 수 있다.
+  폴백 폰트(`Afacad-Regular`를 못 찾아 `Arial.ttf`로 갈 때, `ResolveFont`/
+  `RefreshFont` 참고)로 넘어가면 글자 폭 자체가 달라져 이 계수가 안 맞을 수 있는데,
+  아직 그 화면에서 실측하지 않았다. 크기 조절 손잡이와 "넓어지기만 하는 폭"도
+  검토했지만 넣지 않았다.
   - 긴 줄은 패널의 **`RectMask2D`로 자른다.** 게임에 이미 있는 uGUI 컴포넌트라
     `AddComponent`로 붙는다. 본문은 `UpperLeft` 정렬이라 줄이 적으면 아래가 빈다.
   - 여백 상수(`PadX`/`PadY`)를 한 곳에 모아뒀다 — 머리줄 오프셋과 본문 오프셋,

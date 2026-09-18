@@ -32,8 +32,6 @@ internal static class LogOverlay
     private const float PadX = 12f;
     private const float PadY = 10f;
 
-    private const float MinWidth = 200f;
-
     private const float ReferenceHeight = 1080f;
     private const float GripSize = 24f;
     private const float GripInset = 3f;
@@ -136,8 +134,21 @@ internal static class LogOverlay
     /// <summary>맨 끝을 보고 있으면 새 줄을 따라간다.</summary>
     private static bool _following = true;
 
+    /// <summary>
+    /// 글자 크기당 텍스트 폭(px)과 별도인 고정 여백. 실측(619px @ FontSize 22)엔
+    /// <see cref="PadX"/>×2(본문) 또는 <see cref="HeaderLeft"/>+<see cref="PadX"/>(헤더,
+    /// 그립 자리 포함) 중 하나가 이미 섞여 있었다 — 폰트 크기와 무관한 상수라 비례시키면
+    /// 안 되므로 따로 뗀다. 둘 중 더 큰 헤더 쪽을 기준으로 잡아, 작은 FontSize에서도
+    /// 여백이 줄어들어 잘리는 일이 없게 한다.
+    /// </summary>
+    private const float WidthMargin = HeaderLeft + PadX;
+
+    /// <summary>글자 크기당 텍스트 폭(px). 실측 필요폭(619px @ FontSize 22)에서 본문 여백
+    /// (PadX×2=24)을 뺀 (619-24)/22 ≈ 27.05에 여유를 두고 28로 잡았다 — 못 본 더 긴
+    /// 줄(카드·PK 결과 등)은 반영 못했으니 잠정값이다.</summary>
+    private const float TextWidthPerFontSize = 28f;
+
     public static int MaxLines = 14;
-    public static float Width = 780f;
     public static int FontSize = 15;
     public static KeyCode ToggleKey = KeyCode.F9;
     public static int ScrollLines = 3;
@@ -158,13 +169,12 @@ internal static class LogOverlay
     private static int _screenW;
     private static int _screenH;
 
-    public static void Init(ManualLogSource log, int maxLines, int fontSize, float width,
+    public static void Init(ManualLogSource log, int maxLines, int fontSize,
                             KeyCode toggleKey, int scrollLines,
                             Vector2 position, Action<Vector2> savePosition)
     {
         _log = log;
         MaxLines = Math.Max(1, maxLines);
-        Width = Math.Max(MinWidth, width);
         FontSize = Math.Max(8, fontSize);
         ToggleKey = toggleKey;
         ScrollLines = Math.Max(1, scrollLines);
@@ -448,10 +458,14 @@ internal static class LogOverlay
     }
 
     /// <summary>
-    /// 창 크기는 <see cref="Width"/> × <see cref="MaxLines"/>줄로 고정한다. 내용에 맞추면
-    /// 로그가 올 때마다 창이 커졌다 작아져 읽기 어렵다.
+    /// 높이가 <see cref="FontSize"/> × <see cref="LineHeight"/> 배수로 고정되는 것과 같은
+    /// 이유로, 폭도 <see cref="FontSize"/> 비례로 고정한다. 다만 <see cref="WidthMargin"/>은
+    /// 폰트 크기와 무관한 고정값이라 비례항과 분리했다 — 합쳐서 하나의 배수로 두면 작은
+    /// FontSize에서 여백까지 같이 줄어들어 잘릴 수 있다. 내용에 맞춰 매 렌더마다
+    /// 계산하면 창이 커졌다 작아져 읽기 어렵다.
     /// </summary>
-    private static Vector2 PanelSize() => new(Width, HeightFor(MaxLines));
+    private static Vector2 PanelSize() =>
+        new(FontSize * TextWidthPerFontSize + WidthMargin, HeightFor(MaxLines));
 
     /// <summary>창이 화면보다 커져도 다시 끌 수 있도록 그립이 있는 위쪽과 왼쪽을 살린다.</summary>
     private static Vector2 ClampToScreen(Vector2 pos)
