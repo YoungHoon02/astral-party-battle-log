@@ -366,6 +366,11 @@ python tools/extract_names.py gamedata names.tsv
   `FontSize`에서 자동 계산된다 — 폰트를 키우면 폭도 같이 커진다.
   초기 계수 28은 3라운드 표본에서 잡았고, 긴 스킬 PK 줄이 잘리는 실게임 화면을
   확인한 뒤 32로 올렸다. 다른 긴 줄이 넘치면 `RectMask2D`가 조용히 자른다.
+  높이의 `FontSize * 1.45`는 창이 내용에 맞춰 늘던 시절의 넉넉한 추정이었는데, 창을
+  고정한 뒤로는 그대로 실제 높이가 되어 마지막 줄 아래에 빈 공간이 남았다. 지금은 오버레이를
+  만들 때와 폰트가 바뀔 때 `Text.preferredHeight`로 한 줄·두 줄 높이를 재서
+  `첫 줄 + 줄 간격 × (줄 수 - 1)`로 잡는다. 잰 값은 BepInEx 로그에
+  `Overlay line height measured`로 남고, 재기 전에는 옛 배수를 쓴다.
   폴백 폰트(`Afacad-Regular`를 못 찾아 `Arial.ttf`로 갈 때, `ResolveFont`/
   `RefreshFont` 참고)로 넘어가면 글자 폭 자체가 달라져 이 계수가 안 맞을 수 있는데,
   아직 그 화면에서 실측하지 않았다. 크기 조절 손잡이와 "넓어지기만 하는 폭"도

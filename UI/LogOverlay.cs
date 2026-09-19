@@ -420,11 +420,37 @@ internal static class LogOverlay
         if (_panel is not null && !_dragging) ApplyPosition();
     }
 
-    private static float LineHeight() => FontSize * 1.45f;
+    /// <summary>
+    /// 실제 폰트로 잰 첫 줄 높이와 줄 간격. 고정 배수(1.45)는 창이 내용에 맞춰 늘던 시절의
+    /// 넉넉한 추정이라, 창 크기를 고정한 뒤로는 아래에 빈 공간이 남았다. 폰트가 바뀌면 다시 잰다.
+    /// </summary>
+    private static float _firstLine;
+    private static float _linePitch;
+
+    private static float TextHeight(int lines) =>
+        _linePitch > 0f ? _firstLine + _linePitch * (lines - 1) : FontSize * 1.45f * lines;
+
+    private static void MeasureLines()
+    {
+        if (_text is null || _panel is null) return;
+        string saved = _text.text;
+        _text.text = "가";
+        float one = _text.preferredHeight;
+        _text.text = "가\n가";
+        float two = _text.preferredHeight;
+        _text.text = saved;
+        if (one <= 0f || two <= one) return;
+
+        _firstLine = one;
+        _linePitch = two - one;
+        _log?.LogInfo($"Overlay line height measured: first {one:0.#}, pitch {_linePitch:0.#} at font size {FontSize}.");
+        _panel.sizeDelta = PanelSize();
+        ApplyPosition();
+    }
 
     private static float HeaderGap() => FontSize * 0.5f;
 
-    private static float HeightFor(int lines) => LineHeight() * lines + FontSize + HeaderGap() + PadY * 2f;
+    private static float HeightFor(int lines) => TextHeight(lines) + FontSize + HeaderGap() + PadY * 2f;
 
     private static Vector2 CanvasSize()
     {
@@ -644,6 +670,7 @@ internal static class LogOverlay
         textRect.anchorMax = Vector2.one;
         textRect.offsetMin = new Vector2(PadX, PadY);
         textRect.offsetMax = new Vector2(-PadX, -FontSize - HeaderGap() - PadY);
+        MeasureLines();
 
         _root.SetActive(_visible);
         _log?.LogInfo($"Overlay ready. {ToggleKey} toggles it; scroll with the mouse wheel; drag the grip to move it.");
@@ -729,6 +756,7 @@ internal static class LogOverlay
             label.SetVerticesDirty();
             label.SetLayoutDirty();
         }
+        MeasureLines();
     }
 
     private static Font ResolveFont() => FindGameFont() ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
