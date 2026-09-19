@@ -318,6 +318,32 @@ class Program
         }
         Console.WriteLine();
 
+        // O. 등록보다 먼저 버프를 받은 새 몬스터 — 등록이 따라오면 이름이 붙는다
+        var spawn = new List<string>();
+        var ol = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
+        ol.Mirror = (s, k, g, u) => spawn.Add(Palette.Strip(s).Trim());
+        void Monster(long id, string nick) => ol.OnFrame(new FrameHeader(Op.MonsterRefresh, 0, 0, 0),
+            Frame.Msg(1, Frame.Cat(Frame.Fix64(1, id), Frame.Msg(2, System.Text.Encoding.UTF8.GetBytes(nick)))));
+        void Beat() => ol.OnFrame(new FrameHeader(5004, 0, 7, 0), Array.Empty<byte>());
+        Monster(830, "사이크스");
+        ol.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 830), Cause(1, SkillId), SkillEffect(3187, 9300)));
+        Monster(3187, "도둑");
+        bool o1 = spawn.Count == 0;
+        Beat();
+        bool o2 = spawn.Exists(l => l.Contains("→ 도둑")) && !spawn.Exists(l => l.Contains("?3187"));
+        spawn.Clear();
+        ol.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 830), Cause(1, SkillId), SkillEffect(3500, 9301)));
+        Beat();
+        bool o3 = spawn.Exists(l => l.Contains("?3500"));
+        Console.WriteLine("=== 새로 등장한 몬스터 ===");
+        Console.WriteLine($"  {(o1 ? "OK  " : "FAIL")} O1 모르는 대상이 든 결과는 등록을 기다린다");
+        Console.WriteLine($"  {(o2 ? "OK  " : "FAIL")} O2 등록 뒤 다음 프레임에 이름을 붙여 나온다");
+        Console.WriteLine($"  {(o3 ? "OK  " : "FAIL")} O3 끝내 등록되지 않아도 줄은 사라지지 않는다: [{string.Join(" / ", spawn)}]");
+        Console.WriteLine();
+        if (!o1) fails++;
+        if (!o2) fails++;
+        if (!o3) fails++;
+
         fails += Sched.Run();
 
         Console.WriteLine();

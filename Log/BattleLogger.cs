@@ -158,6 +158,13 @@ internal sealed class BattleLogger
     private bool _finishPending;
 
     private readonly HashSet<long> _msgTargets = new();
+
+    /// <summary>
+    /// 맵이 새로 내보낸 몬스터는 등록(<c>MonsterRefreshS2C</c>)보다 첫 버프가 먼저 온다
+    /// (실측: 도둑의 "훔치기", 타락한 봉황의 "잿불"이 `?3187`, `?3500`으로 찍혔다).
+    /// 모르는 대상이 든 결과는 등록이 따라올 수 있게 몬스터 등록 외의 다음 프레임까지 한 번 미룬다.
+    /// </summary>
+    private (byte[] Body, long Group, LineKind Kind, int Units, long BattleGroup)? _deferred;
     private string? _saidCardName;
 
     /// <summary>
@@ -210,6 +217,8 @@ internal sealed class BattleLogger
 
         // 짝 없는 골드 줄(상점 지출 등)이 영영 안 나오는 걸 막는 안전장치.
         if (_goldHold is { } waiting && DateTime.UtcNow - waiting.At > GoldPairWindow) FlushGold();
+
+        if (_deferred is { } deferred && cmdId != Op.MonsterRefresh) FlushDeferred(deferred);
 
         _group = ++_groupSeq;
         _kind = KindOf(cmdId);
@@ -300,6 +309,11 @@ internal sealed class BattleLogger
                 _finishPending = true;
                 break;
             case Op.UpdateHeroAttr:
+                if (HasUnknownTarget(body))
+                {
+                    _deferred = (body, _group, _kind, _units, _battleGroup);
+                    break;
+                }
                 DecodeUpdateHeroAttr(new ProtoReader(body, 0, body.Length));
                 break;
             case Op.HeroSkillMoveEffect: DecodeSkillMoveEffect(body); break;
@@ -307,6 +321,43 @@ internal sealed class BattleLogger
             case Op.ThrowDice: DecodeThrowDice(body); break;
             case Op.MoveAgain: DecodeMoveAgain(body); break;
         }
+    }
+
+    private void FlushDeferred((byte[] Body, long Group, LineKind Kind, int Units, long BattleGroup) d)
+    {
+        _deferred = null;
+        (long group, LineKind kind, int units, bool fromCause, long battleGroup) =
+            (_group, _kind, _units, _kindFromCause, _battleGroup);
+        (_group, _kind, _units, _kindFromCause, _battleGroup) = (d.Group, d.Kind, d.Units, true, d.BattleGroup);
+        DecodeUpdateHeroAttr(new ProtoReader(d.Body, 0, d.Body.Length));
+        (_group, _kind, _units, _kindFromCause, _battleGroup) = (group, kind, units, fromCause, battleGroup);
+    }
+
+    private bool HasUnknownTarget(byte[] body)
+    {
+        if (_roster.IsEmpty) return false;
+        var r = new ProtoReader(body, 0, body.Length);
+        while (r.NextField(out int field, out int wire))
+        {
+            if (field == 4 && wire == ProtoReader.WireLength && r.TryReadMessage(out var effect))
+            {
+                while (effect.NextField(out int f, out int w))
+                {
+                    if (f == 1 && IsNumber(w))
+                    {
+                        if (effect.TryReadNumber(w, out long target) && target != 0 && !_roster.Knows(target))
+                            return true;
+                        break;
+                    }
+                    if (!effect.Skip(w)) break;
+                }
+            }
+            else if (!r.Skip(wire))
+            {
+                break;
+            }
+        }
+        return false;
     }
 
     private void DecodeRoundStart(byte[] body)
@@ -1566,6 +1617,7 @@ internal sealed class BattleLogger
         _finishPending = false;
         _msgTargets.Clear();
         _saidCardName = null;
+        _deferred = null;
         _saidSource = -1;
         _saidId = 0;
         _saidActor = 0;

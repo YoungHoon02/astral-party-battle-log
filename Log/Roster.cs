@@ -220,6 +220,10 @@ internal sealed class Roster
     /// 나오고, 게다가 첫 벌에는 <b>계정 닉네임</b>이 들어간다 — 로그를 공유하면 남의
     /// 계정 정보가 같이 나간다(CONTRIBUTING "계정 식별자를 로그 본문에 쓰지 않는다").
     /// </summary>
+    public bool Knows(long id) => _entries.ContainsKey(id);
+
+    public bool IsEmpty => _entries.Count == 0;
+
     public bool HasHero(long id) =>
         _entries.TryGetValue(id, out Entry? e) && e.HeroId != 0;
 
