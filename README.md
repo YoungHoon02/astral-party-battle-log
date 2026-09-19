@@ -188,6 +188,9 @@ dotnet build AstralPartyBattleLog.csproj -c Release
 
 빌드 결과는 `bin/Release/net6.0/AstralPartyBattleLog.dll`에 생성됩니다.
 
+다음 릴리스부터는 PowerShell에서 `./tools/build-release.ps1`로 배포 ZIP을 만듭니다.
+이 스크립트는 DLL과 사용 전 안내, 설치 방법, 라이선스를 플러그인 폴더에 함께 넣습니다.
+
 개발 배경과 제약은 [아키텍처 및 제약](docs/ARCHITECTURE.md)에 설명되어 있습니다.
 기여하기 전에는 정보 수집 범위와 개인정보 보호 기준이 담긴
 [기여 안내](CONTRIBUTING.md)를 먼저 확인해 주세요.
