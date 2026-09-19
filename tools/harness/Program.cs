@@ -213,6 +213,57 @@ class Program
         }
         Console.WriteLine();
 
+        // L. 쓰러진 대상의 버프 해제는 대상별 한 줄로 합친다
+        var fell = new List<string>();
+        var dl = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
+        dl.Mirror = (s, k, g, u) => fell.Add(Palette.Strip(s).Trim());
+        static byte[] BuffOp(long target, long uid, int buffId, int op) =>
+            Frame.Msg(4, Frame.Cat(
+                Frame.Fix64(1, target),
+                Frame.Msg(6, Frame.Cat(
+                    Frame.Fix64(1, target),
+                    Frame.Msg(2, BuffMsg(uid, buffId, 0, 0)),
+                    Frame.Varint(3, (ulong)op)))));
+        void Attr(params byte[][] parts) =>
+            dl.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(parts));
+        Attr(Frame.Fix64(1, 950), Cause(7, 0),
+             BuffOp(950, 31, 101, 1), BuffOp(950, 32, 102, 1), BuffOp(950, 33, 103, 1),
+             BuffOp(951, 34, 104, 1), BuffOp(952, 35, 105, 1));
+        Attr(Frame.Fix64(1, 900), Cause(12, 1),
+             HpEffect(950, 5, 0, -5, -5, 0, 10), HpEffect(952, 4, 0, -4, -4, 0, 10));
+        fell.Clear();
+        Attr(Frame.Fix64(1, 900),
+             BuffOp(950, 31, 101, 2), BuffOp(950, 32, 102, 2), BuffOp(950, 33, 103, 2),
+             BuffOp(951, 34, 104, 2), BuffOp(952, 35, 105, 2));
+        Console.WriteLine("=== 쓰러짐 버프 해제 묶기 ===");
+        bool l1 = fell.Exists(l => l == "버프 해제 ?950 3개 (쓰러짐)") && !fell.Exists(l => l.StartsWith("버프 해제 ?950 ") && !l.EndsWith("(쓰러짐)"));
+        bool l2 = fell.Exists(l => l.StartsWith("버프 해제 ?951") && !l.Contains("쓰러짐"));
+        bool l3 = fell.Exists(l => l.StartsWith("버프 해제 ?952") && !l.Contains("개 (쓰러짐)"));
+        Console.WriteLine($"  {(l1 ? "OK  " : "FAIL")} L1 쓰러진 대상의 해제 3개 → 한 줄");
+        Console.WriteLine($"  {(l2 ? "OK  " : "FAIL")} L2 살아 있는 대상은 그대로");
+        Console.WriteLine($"  {(l3 ? "OK  " : "FAIL")} L3 해제가 하나면 원래 줄 유지");
+        foreach (var l in fell) Console.WriteLine("       " + l);
+        Console.WriteLine();
+        if (!l1) fails++;
+        if (!l2) fails++;
+        if (!l3) fails++;
+
+        // M. 게임 종료 구분선은 뒤따르는 정리성 갱신 다음에 나온다
+        var end = new List<string>();
+        var el = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
+        el.Mirror = (s, k, g, u) => end.Add(Palette.Strip(s).Trim());
+        el.OnFrame(new FrameHeader(Op.GameFinish, 0, 0, 0), Array.Empty<byte>());
+        el.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 960), HpEffect(960, 3, 2, -1, -1, 2, 10)));
+        bool m1 = !end.Exists(l => l.Contains("게임 종료"));
+        el.OnFrame(new FrameHeader(5004, 0, 7, 0), Array.Empty<byte>());
+        bool m2 = end.Count > 0 && end[^1].Contains("게임 종료") && end.FindIndex(l => l.Contains("HP 3→2")) < end.Count - 1;
+        Console.WriteLine("=== 게임 종료 구분선 ===");
+        Console.WriteLine($"  {(m1 ? "OK  " : "FAIL")} M1 종료 직후의 갱신이 끝날 때까지 구분선을 미룬다");
+        Console.WriteLine($"  {(m2 ? "OK  " : "FAIL")} M2 다른 메시지가 오면 마지막 줄로 나온다: [{string.Join(" | ", end)}]");
+        Console.WriteLine();
+        if (!m1) fails++;
+        if (!m2) fails++;
+
         fails += Sched.Run();
 
         Console.WriteLine();

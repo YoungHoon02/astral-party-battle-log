@@ -145,6 +145,17 @@ internal sealed class BattleLogger
     /// </summary>
     private static readonly TimeSpan SaidWindow = TimeSpan.FromSeconds(2);
 
+    /// <summary>
+    /// 쓰러지면 게임이 걸린 버프를 한꺼번에 지운다. 그 해제는 사건이 아니라 정리라서
+    /// 대상별 한 줄로 합친다. 창을 두는 이유는 SaidWindow와 같다 — 한참 뒤의 해제까지
+    /// 쓰러짐 탓으로 돌리지 않게.
+    /// </summary>
+    private readonly Dictionary<long, DateTime> _downAt = new();
+    private readonly Dictionary<long, (int Index, int Count)> _downFold = new();
+    private static readonly TimeSpan DownWindow = TimeSpan.FromSeconds(3);
+
+    private bool _finishPending;
+
     public BattleLogger(ManualLogSource log, string? filePath, bool traceUnknown,
                         HashSet<int> hexDump, bool logPlayerIds, bool logCards,
                         NameTable names)
@@ -184,6 +195,14 @@ internal sealed class BattleLogger
         _kind = KindOf(cmdId);
         _units = 0;
         _kindFromCause = cmdId == Op.UpdateHeroAttr;
+
+        // 게임 종료와 같은 순간에 정리성 갱신(회복량 0, 버프 해제)이 뒤따라 온다.
+        // 구분선이 그 앞에 끼지 않게, 다른 종류의 메시지가 처음 올 때 내보낸다.
+        if (_finishPending && cmdId is not (Op.UpdateHeroAttr or Op.HeroSkillMoveEffect or Op.LandBuffs))
+        {
+            _finishPending = false;
+            Emit("──────── 게임 종료 ────────");
+        }
 
         // 모든 응답이 사용자 입력은 아니다. 실측에서 화면 단계와 대응한 응답만 동기화한다.
         if (header.UpSn != 0 && Op.TimingSync.Contains(cmdId)) MirrorSync?.Invoke();
@@ -258,7 +277,7 @@ internal sealed class BattleLogger
             case Op.Battle: DecodeBattle(body); break;
             case Op.GameFinish:
                 Diag("[game] GameFinish(1016)");
-                Emit("──────── 게임 종료 ────────");
+                _finishPending = true;
                 break;
             case Op.UpdateHeroAttr:
                 DecodeUpdateHeroAttr(new ProtoReader(body, 0, body.Length));
@@ -622,6 +641,7 @@ internal sealed class BattleLogger
         _msgActor = 0;
         _skillFired.Clear();
         _causeSkillLine = null;
+        _downFold.Clear();
 
         while (r.NextField(out int field, out int wire))
         {
@@ -1029,6 +1049,9 @@ internal sealed class BattleLogger
 
         if (filtered.Length > 0) return "";
 
+        if (curr <= 0 && ori > 0) _downAt[pid] = DateTime.UtcNow;
+        else if (curr > 0) _downAt.Remove(pid);
+
         // 서버가 RealChangeHp를 안 실어 보냈는데 HP는 움직인 경우가 있을 수 있다.
         // 그땐 전후 차이가 유일한 사실이다.
         long delta = real != 0 ? real : curr - ori;
@@ -1129,7 +1152,7 @@ internal sealed class BattleLogger
         {
             if (b.Id == 0 && _buffs.TryGetValue(b.Uid, out var known)) b = known.Info;
             _buffs.Remove(b.Uid);
-            Add(lines, BuffLine(pid, b, BuffEvent.Lose, causeSource, causeId));
+            AddLose(lines, pid, b, causeSource, causeId);
             return;
         }
 
@@ -1142,6 +1165,27 @@ internal sealed class BattleLogger
     }
 
     private enum BuffEvent { Gain, Update, Lose }
+
+    private void AddLose(List<string> lines, long pid, BuffInfo b, long causeSource, long causeId)
+    {
+        string line = BuffLine(pid, b, BuffEvent.Lose, causeSource, causeId);
+        if (line.Length == 0) return;
+        bool down = _downAt.TryGetValue(pid, out var at) && DateTime.UtcNow - at < DownWindow;
+        if (!down || b.SourceKind == RelicOrigin)
+        {
+            lines.Add(line);
+            return;
+        }
+
+        if (!_downFold.TryGetValue(pid, out var fold))
+        {
+            lines.Add(line);
+            _downFold[pid] = (lines.Count - 1, 1);
+            return;
+        }
+        _downFold[pid] = (fold.Index, fold.Count + 1);
+        lines[fold.Index] = $"버프 해제 {_roster.Name(pid)} {fold.Count + 1}개 (쓰러짐)";
+    }
 
     private void Remember(long pid, BuffInfo? info)
     {
@@ -1273,7 +1317,7 @@ internal sealed class BattleLogger
         foreach (var b in gone)
         {
             _buffs.Remove(b.Uid);
-            Add(lines, BuffLine(pid, b, BuffEvent.Lose, causeSource, causeId));
+            AddLose(lines, pid, b, causeSource, causeId);
         }
 
         foreach (var b in now)
@@ -1466,6 +1510,9 @@ internal sealed class BattleLogger
         _skillFired.Clear();
         _causeSkillLine = null;
         _causeNamesRelic = false;
+        _downAt.Clear();
+        _downFold.Clear();
+        _finishPending = false;
         _saidSource = -1;
         _saidId = 0;
         _saidActor = 0;
