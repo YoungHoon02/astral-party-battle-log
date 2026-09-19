@@ -407,8 +407,8 @@ internal sealed class BattleLogger
         _saidSkillUse = 0;
         _cardSubmits.Clear();
         var note = new StringBuilder();
-        if (die != 0) note.Append(" [사망]");
-        if (hospital != 0) note.Append(" [병원]");
+        if (die != 0) note.Append(" [기절]");
+        if (hospital != 0) note.Append(" [회복]");
         if (stop != 0) note.Append(" [턴중단]");
         Emit($"· {_roster.Name(pid)} 행동 시작{note}");
     }
