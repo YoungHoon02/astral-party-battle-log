@@ -361,8 +361,8 @@ python tools/extract_names.py gamedata names.tsv
   FontSize가 작아질수록 이 여백까지 같이 줄어들어, 최소 허용치인 FontSize 8에서
   실제 필요 폭(약 240px)보다 패널이 좁아져(232px) 잘릴 수 있었다. 그래서 지금은
   `Width = FontSize * TextWidthPerFontSize(32) + WidthMargin(HeaderLeft+PadX=42)`로
-  비례항과 고정 여백을 분리한다 — `HeightFor`가 `LineHeight() * lines` (비례) +
-  `PadY * 2` (고정)로 나뉜 것과 같은 구조다. `Overlay.Width` 설정은 없고, 폭은
+  비례항과 고정 여백을 분리한다 — 높이 계산도 본문 높이와 `PadY * 2` (고정)를
+  따로 더한다. `Overlay.Width` 설정은 없고, 폭은
   `FontSize`에서 자동 계산된다 — 폰트를 키우면 폭도 같이 커진다.
   초기 계수 28은 3라운드 표본에서 잡았고, 긴 스킬 PK 줄이 잘리는 실게임 화면을
   확인한 뒤 32로 올렸다. 다른 긴 줄이 넘치면 `RectMask2D`가 조용히 자른다.
