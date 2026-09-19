@@ -69,7 +69,7 @@ class Program
         string dir = Path.GetTempPath() + "apbl-h";
         Directory.CreateDirectory(dir);
         string namesPath = Path.Combine(dir, "names.tsv");
-        File.WriteAllText(namesPath, "skill\t777\t훔치기\ncard\t42\t폭탄\n", new System.Text.UTF8Encoding(false));
+        File.WriteAllText(namesPath, "skill\t777\t훔치기\ncard\t42\t폭탄\nbuff\t4200\t폭탄\nbuff\t4300\t광폭\nbuff\t10006\t【표식】\n", new System.Text.UTF8Encoding(false));
         var names = NameTable.Load(namesPath, _ => { });
 
         var log = new ManualLogSource("h");
@@ -263,6 +263,60 @@ class Program
         Console.WriteLine();
         if (!m1) fails++;
         if (!m2) fails++;
+
+        // N. 행위자 없는 메시지의 주어, 스택 이름, 레벨 업, 효과카드 버프
+        var subj = new List<string>();
+        var sj = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
+        sj.Mirror = (s, k, g, u) => subj.Add(Palette.Strip(s).Trim());
+        static byte[] Counter(int field, long target, int ori, int curr) =>
+            Frame.Msg(4, Frame.Cat(Frame.Fix64(1, target), Frame.Msg(field, Frame.Cat(
+                Frame.Fix64(1, target), Frame.Fix32(2, curr - ori), Frame.Fix32(3, ori), Frame.Fix32(4, curr)))));
+        static byte[] Gold(long target, int ori, int curr) =>
+            Frame.Msg(4, Frame.Cat(Frame.Fix64(1, target), Frame.Msg(2, Frame.Cat(
+                Frame.Fix64(1, target), Frame.Fix32(2, curr - ori), Frame.Fix32(3, ori), Frame.Fix32(4, curr)))));
+        static byte[] Level(long target, int lv) =>
+            Frame.Msg(4, Frame.Cat(Frame.Fix64(1, target), Frame.Msg(11, Frame.Cat(Frame.Fix64(1, target), Frame.Fix32(2, lv)))));
+        static byte[] Gain(long target, long uid, int buffId) =>
+            Frame.Msg(4, Frame.Cat(Frame.Fix64(1, target), Frame.Msg(6, Frame.Cat(
+                Frame.Fix64(1, target), Frame.Msg(2, BuffMsg(uid, buffId, 0, 0)), Frame.Varint(3, 1)))));
+        List<string> Case(Action act) { subj.Clear(); act(); return new List<string>(subj); }
+        void Attr2(params byte[][] parts) => sj.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(parts));
+        sj.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 830));
+
+        Console.WriteLine("=== 주어·스택·레벨·효과카드 버프 ===");
+        // 골드 한 줄짜리는 송금 짝을 기다리느라 다음 줄이 나올 때 함께 나온다.
+        var n1 = Case(() => { Attr2(Gold(831, 8, 15)); sj.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 830)); });
+        var n2 = Case(() => Attr2(Counter(15, 830, 3, 1)));
+        var n3 = Case(() => Attr2(Cause(11, 0), Gold(832, 4, 10), Gold(833, 14, 19)));
+        var n4 = Case(() => Attr2(Counter(17, 831, 0, 2)));
+        var n5 = Case(() => Attr2(Gold(830, 18, 3), Level(830, 1)));
+        var n6 = Case(() =>
+        {
+            sj.OnFrame(new FrameHeader(Op.UseEffectCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 830), Frame.Fix32(2, 42)));
+            Attr2(Gain(830, 71, 4200));
+        });
+        var n7 = Case(() =>
+        {
+            sj.OnFrame(new FrameHeader(Op.UseEffectCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 830), Frame.Fix32(2, 42)));
+            Attr2(Gain(830, 72, 4300));
+        });
+        var nCases = new (string Label, List<string> Got, string[] Want)[]
+        {
+            ("N1 차례 주인이 아닌 사람이 받은 골드 → 받은 사람이 주어", n1, new[] { "[R0] ?831", "?831 골드 8→15  +7", "· ?830 행동 시작" }),
+            ("N2 차례 주인이 받은 것 → 그대로 차례 주인", n2, new[] { "[R0] ?830", "치유 ?830 3→1 (-2)" }),
+            ("N3 여러 명이 받은 것 → 주어 없이 원인만", n3, new[] { "[R0] (라운드 보상)", "?832 골드 4→10  +6", "?833 골드 14→19  +5" }),
+            ("N4 스택 이름은 게임 버프 이름", n4, new[] { "[R0] ?831", "【표식】 ?831 0→2 (+2)" }),
+            ("N5 레벨 업", n5, new[] { "[R0] ?830", "?830 골드 18→3  -15", "?830 레벨 업 → Lv1" }),
+            ("N6 카드 이름과 같은 버프는 카드 줄에 잇는다", n6, new[] { "[R0] ?830 효과카드 \"폭탄\"", "버프 부여 ?830 \"폭탄\"" }),
+            ("N7 다른 이름의 버프는 따로 머리줄", n7, new[] { "[R0] ?830 효과카드 \"폭탄\"", "[R0] ?830", "버프 부여 ?830 \"광폭\"" }),
+        };
+        foreach (var c in nCases)
+        {
+            bool ok = string.Join("|", c.Got) == string.Join("|", c.Want);
+            Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} {c.Label}: [{string.Join(" / ", c.Got)}]");
+            if (!ok) { fails++; Console.WriteLine($"       기대: [{string.Join(" / ", c.Want)}]"); }
+        }
+        Console.WriteLine();
 
         fails += Sched.Run();
 

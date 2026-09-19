@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using AstralPartyBattleLog.Net;
 using AstralPartyBattleLog.Proto;
@@ -155,6 +156,25 @@ internal sealed class BattleLogger
     private static readonly TimeSpan DownWindow = TimeSpan.FromSeconds(3);
 
     private bool _finishPending;
+
+    private readonly HashSet<long> _msgTargets = new();
+    private string? _saidCardName;
+
+    /// <summary>
+    /// 캐릭터별 스택. 게임은 이 값들을 고정 id의 버프로 화면에 띄우므로
+    /// (<c>BattleProperty.RegisterPropertyBuff</c>) 그 버프 이름을 쓴다.
+    /// </summary>
+    private static readonly Dictionary<int, (long BuffId, string Fallback)> Stacks = new()
+    {
+        [15] = (10004, "치유"),
+        [16] = (10005, "스타라이트"),
+        [17] = (10006, "표식"),
+        [21] = (10008, "반격"),
+        [22] = (10009, "개조"),
+        [28] = (10012, "정신"),
+        [31] = (10014, "에너지"),
+        [32] = (10013, "증거"),
+    };
 
     public BattleLogger(ManualLogSource log, string? filePath, bool traceUnknown,
                         HashSet<int> hexDump, bool logPlayerIds, bool logCards,
@@ -472,6 +492,7 @@ internal sealed class BattleLogger
         // 카드를 남기지 않을 때도 원인은 말한 것으로 둔다. 그러지 않으면 뒤따르는
         // UpdateHeroAttr의 머리줄이 `(카드 "이름")`으로 카드를 그대로 드러낸다.
         Said(CardCause, cardId, pid);   // 뒤따르는 UpdateHeroAttr이 머리줄을 생략한다
+        _saidCardName = _logCards ? Palette.Strip(CardLabel(cardId)) : null;
         if (!_logCards) { AdvanceOverlay(_kind); return; }
         var sb = new StringBuilder($"[R{_round}] {_roster.Name(pid)} 효과카드 {CardLabel(cardId)}");
         AppendTargets(sb, targets);
@@ -642,6 +663,7 @@ internal sealed class BattleLogger
         _skillFired.Clear();
         _causeSkillLine = null;
         _downFold.Clear();
+        _msgTargets.Clear();
 
         while (r.NextField(out int field, out int wire))
         {
@@ -680,7 +702,12 @@ internal sealed class BattleLogger
         // 직전 줄이 같은 원인을 말했으면 머리줄을 건너뛴다. **주체까지 같아야 한다** —
         // 칩 선택은 여러 명이 같은 칩 id로 몰려 와서 남의 머리줄을 지운다.
         // PK만 예외다: 머리줄은 공격자인데 효과는 방어자에게 나는 게 정상이라서.
-        long who = actor != 0 ? actor : _turnOwner;
+        // 행위자가 없으면 차례 주인은 추측일 뿐이다. 효과를 받은 사람이 차례 주인이 아니면
+        // 틀린 주어가 된다(실측: 파파라 차례에 사이크스가 받은 처치 보상이 `[R7] 파파라` 아래에 찍혔다).
+        long who = actor != 0 ? actor
+            : _msgTargets.Count == 0 || _msgTargets.Contains(_turnOwner) ? _turnOwner
+            : _msgTargets.Count == 1 ? _msgTargets.First()
+            : 0;
         bool alreadySaid = causeSource == _saidSource
                            && (causeSource == BattleCause || (causeId == _saidId && who == _saidActor))
                            && DateTime.UtcNow - _saidAt < SaidWindow;
@@ -694,10 +721,17 @@ internal sealed class BattleLogger
         }
         else
         {
+            string subject = who != 0 ? $" {_roster.Name(who)}" : "";
             header = cause.Length > 0
-                ? $"[R{_round}] {_roster.Name(who)} ({cause})"
-                : $"[R{_round}] {_roster.Name(who)}";
+                ? $"[R{_round}]{subject} ({cause})"
+                : $"[R{_round}]{subject}";
         }
+
+        // 효과카드가 건 버프는 원인 없이 따로 온다. 카드 이름과 같은 버프만 있으면 카드 줄에 잇는다.
+        if (!alreadySaid && cause.Length == 0 && _saidSource == CardCause && _saidCardName is { } card
+            && DateTime.UtcNow - _saidAt < SaidWindow
+            && lines.TrueForAll(l => Palette.Strip(l).Contains(card)))
+            alreadySaid = true;
 
         // 골드 한 건만 있는 독립 메시지면 송금의 한쪽일 수 있다. 짝을 맞춰본다.
         if (!alreadySaid && lines.Count == 1 && _goldSeen is { } gold)
@@ -951,8 +985,9 @@ internal sealed class BattleLogger
             if (field == 1 && IsNumber(wire))
             {
                 if (!r.TryReadNumber(wire, out target)) return;
+                if (target != 0) _msgTargets.Add(target);
             }
-            else if (wire == ProtoReader.WireLength && field is 2 or 3 or 4 or 5 or 6 or 15 or 21)
+            else if (wire == ProtoReader.WireLength && (field is 2 or 3 or 4 or 5 or 6 or 11 || Stacks.ContainsKey(field)))
             {
                 if (!r.TryReadMessage(out var sub)) return;
                 switch (field)
@@ -962,8 +997,11 @@ internal sealed class BattleLogger
                     case 4: Add(lines, DecodeStat(sub, target, 5, attack: true)); break;
                     case 5: Add(lines, DecodeStat(sub, target, 5, attack: false)); break;
                     case 6: DecodeBuff(sub, target, causeSource, causeId, lines); break;
-                    case 15: Add(lines, DecodeNum(sub, target, "회복량")); break;
-                    case 21: Add(lines, DecodeNum(sub, target, "반격")); break;
+                    case 11: Add(lines, DecodeLevel(sub, target)); break;
+                    default:
+                        var (buffId, fallback) = Stacks[field];
+                        Add(lines, DecodeNum(sub, target, _names.Lookup("buff", buffId) ?? fallback));
+                        break;
                 }
             }
             else if (!r.Skip(wire))
@@ -1394,6 +1432,19 @@ internal sealed class BattleLogger
         return $"{label} {_roster.Name(pid)} {ori}→{curr} ({change:+0;-0;0})";
     }
 
+    private string DecodeLevel(ProtoReader r, long fallbackTarget)
+    {
+        long pid = fallbackTarget, lv = 0;
+        while (r.NextField(out int field, out int wire))
+        {
+            if (!IsNumber(wire)) { if (!r.Skip(wire)) break; continue; }
+            if (!r.TryReadNumber(wire, out long v)) break;
+            if (field == 1) pid = v;
+            else if (field == 2) lv = v;
+        }
+        return $"{_roster.Name(pid)} 레벨 업 → Lv{lv}";
+    }
+
     private static long ReadNumberField(byte[] body, int wanted)
     {
         var r = new ProtoReader(body, 0, body.Length);
@@ -1513,6 +1564,8 @@ internal sealed class BattleLogger
         _downAt.Clear();
         _downFold.Clear();
         _finishPending = false;
+        _msgTargets.Clear();
+        _saidCardName = null;
         _saidSource = -1;
         _saidId = 0;
         _saidActor = 0;
