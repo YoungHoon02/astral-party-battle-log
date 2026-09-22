@@ -54,6 +54,21 @@ internal static class SocketTap
         lock (Gate) Outstanding[socket] = new Pending(buffer, offset);
     }
 
+    /// <summary>
+    /// 끊긴 소켓의 상태를 버린다. <c>EndReceive</c>가 <c>ObjectDisposedException</c>을 던지면
+    /// Postfix가 아예 불리지 않아 재조립기가 남는데, IL2CPP는 dispose된 객체의 주소를
+    /// 재사용하므로 <b>재접속이 만든 새 소켓이 죽은 소켓의 반쪽 프레임을 물려받는다.</b>
+    /// 그러면 프레임 경계가 어긋나 큰 메시지(방 명단 등)가 통째로 유실된다.
+    /// </summary>
+    internal static void DropSocket(IntPtr socket)
+    {
+        lock (Gate)
+        {
+            Outstanding.Remove(socket);
+            Streams.Remove(socket);
+        }
+    }
+
     /// <summary>EndReceive가 알려준 바이트 수만큼 위 버퍼에서 꺼내 재조립기에 넣는다.</summary>
     internal static void NoteEndReceive(IntPtr socket, int received)
     {
@@ -65,7 +80,13 @@ internal static class SocketTap
             if (!Outstanding.TryGetValue(socket, out pending)) return;
             Outstanding.Remove(socket);
 
-            if (received <= 0) return;
+            // 0바이트는 정상 종료(FIN)다. 예외가 안 나므로 Finalizer도 안 불린다 —
+            // 여기서 버리지 않으면 같은 주소를 받은 새 소켓이 이 재조립기를 물려받는다.
+            if (received <= 0)
+            {
+                Streams.Remove(socket);
+                return;
+            }
 
             if (!Streams.TryGetValue(socket, out stream!))
             {
@@ -118,6 +139,15 @@ internal static class EndReceivePatch
     private static void Postfix(Il2CppSocket __instance, int __result)
     {
         try { SocketTap.NoteEndReceive(__instance.Pointer, __result); }
+        catch { }
+    }
+
+    // 소켓이 닫히면 EndReceive가 던지고 Postfix는 불리지 않는다. 그 소켓의 상태를
+    // 여기서 버려야 재접속이 깨끗한 재조립기로 시작한다. 예외는 삼키지 않는다.
+    private static void Finalizer(Il2CppSocket __instance, Exception? __exception)
+    {
+        if (__exception is null) return;
+        try { SocketTap.DropSocket(__instance.Pointer); }
         catch { }
     }
 }
