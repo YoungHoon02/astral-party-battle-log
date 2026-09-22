@@ -81,20 +81,29 @@ $ghArgs = @('release', 'create', $tag, $zip,
 if ($Draft) { $ghArgs += '--draft' }
 & gh @ghArgs
 if ($LASTEXITCODE -ne 0) {
-    # gh는 릴리스 생성과 자산 업로드를 따로 처리한다. 실패해도 릴리스가 이미
-    # 만들어져 있을 수 있으므로, 남아 있으면 태그를 건드리지 않는다.
+    # gh는 릴리스 생성과 자산 업로드를 따로 처리하므로 실패해도 릴리스가 남아 있을 수 있다.
+    # 없다고 확인된 경우에만 태그를 되돌린다 — 인증·네트워크로 확인에 실패한 것을
+    # "없음"으로 읽으면 멀쩡한 릴리스의 태그를 지운다.
     # (PS 5.1은 네이티브 명령의 stderr 리다이렉트를 오류로 승격시키므로 Stop을 잠시 푼다.)
     $prevEap = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
-    $null = & gh release view $tag --repo $repo 2>&1
-    $exists = ($LASTEXITCODE -eq 0)
+    $view = (& gh release view $tag --repo $repo 2>&1 | Out-String)
+    $viewCode = $LASTEXITCODE
     $ErrorActionPreference = $prevEap
-    if ($exists) {
+
+    if ($viewCode -eq 0) {
         Write-Warning '릴리스가 남아 있습니다. 태그는 그대로 두었습니다. 상태를 확인하고 이어서 하세요:'
         Write-Warning "  gh release view $tag --repo $repo --web"
         Write-Warning "  gh release upload $tag '$zip' --repo $repo --clobber    # 자산만 빠졌을 때"
         Write-Warning "  gh release delete $tag --repo $repo --cleanup-tag       # 처음부터 다시 할 때"
         throw '릴리스가 일부만 만들어졌습니다.'
+    }
+    if ($view -notmatch 'release not found|HTTP 404') {
+        Write-Warning '릴리스 상태를 확인하지 못했습니다(인증·네트워크). 태그는 그대로 두었습니다:'
+        Write-Warning ($view.Trim())
+        Write-Warning "  gh auth status"
+        Write-Warning "  gh release view $tag --repo $repo    # 없으면: git push --delete origin $tag"
+        throw '릴리스 상태를 확인할 수 없습니다.'
     }
     # 태그만 남으면 다음 실행이 중복 태그 검사에 막혀 손으로 지워야 한다.
     & git -C $root push --delete origin $tag | Out-Null
