@@ -19,6 +19,7 @@
     <Compile Include="$(SrcDir)\Proto\ProtoReader.cs" />
     <Compile Include="$(SrcDir)\Log\BattleLogger.cs" />
     <Compile Include="$(SrcDir)\Log\NameTable.cs" />
+    <Compile Include="$(SrcDir)\Log\RosterCache.cs" />
     <Compile Include="$(SrcDir)\Log\Roster.cs" />
     <Compile Include="$(SrcDir)\Log\LandMap.cs" />
     <Compile Include="$(SrcDir)\Log\Palette.cs" />

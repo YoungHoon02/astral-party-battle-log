@@ -122,6 +122,9 @@ internal static class LogOverlay
     /// 로딩 씬을 거치느라 전투 중에도 씬이 바뀐다. <b>이 씬을 벗어날 때만</b> 나간 것으로 본다.
     /// </summary>
     private static string? _battleScene;
+
+    /// <summary>오버레이를 꺼도 씬 감지는 돌므로 표시 설정과 무관하게 불린다.</summary>
+    public static Action? OnLeftGame;
     private static int _lastFontScan;
 
     /// <summary>
@@ -239,6 +242,7 @@ internal static class LogOverlay
         _inGame = false;
         SetVisible(false);
         OverlaySchedule.Discard();
+        try { OnLeftGame?.Invoke(); } catch { }
     }
 
     private static void EnterGame()

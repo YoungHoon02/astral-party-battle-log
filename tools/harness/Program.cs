@@ -305,13 +305,13 @@ class Program
         });
         var nCases = new (string Label, List<string> Got, string[] Want)[]
         {
-            ("N1 차례 주인이 아닌 사람이 받은 골드 → 받은 사람이 주어", n1, new[] { "[R0] ?831", "?831 골드 8→15  +7", "· ?830 행동 시작" }),
-            ("N2 차례 주인이 받은 것 → 그대로 차례 주인", n2, new[] { "[R0] ?830", "치유 ?830 3→1 (-2)" }),
-            ("N3 여러 명이 받은 것 → 주어 없이 원인만", n3, new[] { "[R0] (라운드 보상)", "?832 골드 4→10  +6", "?833 골드 14→19  +5" }),
-            ("N4 스택 이름은 게임 버프 이름", n4, new[] { "[R0] ?831", "【표식】 ?831 0→2 (+2)" }),
-            ("N5 레벨 업", n5, new[] { "[R0] ?830", "?830 골드 18→3  -15", "?830 레벨 업 → Lv1" }),
-            ("N6 카드 이름과 같은 버프는 카드 줄에 잇는다", n6, new[] { "[R0] ?830 효과카드 \"폭탄\"", "버프 부여 ?830 \"폭탄\"" }),
-            ("N7 다른 이름의 버프는 따로 머리줄", n7, new[] { "[R0] ?830 효과카드 \"폭탄\"", "[R0] ?830", "버프 부여 ?830 \"광폭\"" }),
+            ("N1 차례 주인이 아닌 사람이 받은 골드 → 받은 사람이 주어", n1, new[] { "[R?] ?831", "?831 골드 8→15  +7", "· ?830 행동 시작" }),
+            ("N2 차례 주인이 받은 것 → 그대로 차례 주인", n2, new[] { "[R?] ?830", "치유 ?830 3→1 (-2)" }),
+            ("N3 여러 명이 받은 것 → 주어 없이 원인만", n3, new[] { "[R?] (라운드 보상)", "?832 골드 4→10  +6", "?833 골드 14→19  +5" }),
+            ("N4 스택 이름은 게임 버프 이름", n4, new[] { "[R?] ?831", "【표식】 ?831 0→2 (+2)" }),
+            ("N5 레벨 업", n5, new[] { "[R?] ?830", "?830 골드 18→3  -15", "?830 레벨 업 → Lv1" }),
+            ("N6 카드 이름과 같은 버프는 카드 줄에 잇는다", n6, new[] { "[R?] ?830 효과카드 \"폭탄\"", "버프 부여 ?830 \"폭탄\"" }),
+            ("N7 다른 이름의 버프는 따로 머리줄", n7, new[] { "[R?] ?830 효과카드 \"폭탄\"", "[R?] ?830", "버프 부여 ?830 \"광폭\"" }),
         };
         foreach (var c in nCases)
         {
@@ -346,6 +346,114 @@ class Program
         if (!o1) fails++;
         if (!o2) fails++;
         if (!o3) fails++;
+
+        // Q. 이름표 캐시: 재접속으로 명단을 놓쳐도 이름이 되살아난다
+        Console.WriteLine("=== 이름표 캐시 (재접속) ===");
+        string cachePath = Path.Combine(dir, "roster-cache.tsv");
+        if (File.Exists(cachePath)) File.Delete(cachePath);
+
+        // Room { 1:roomId, 9:Player{1:id, 2:nick, 6:slot, 10:Hero{2:heroId}} }
+        static byte[] Room(long roomId, long pid, string nick, int slot, long heroId) =>
+            Frame.Msg(1, Frame.Cat(
+                Frame.Fix64(1, roomId),
+                Frame.Msg(9, Frame.Cat(
+                    Frame.Fix64(1, pid),
+                    Frame.Msg(2, System.Text.Encoding.UTF8.GetBytes(nick)),
+                    Frame.Varint(6, (ulong)slot),
+                    Frame.Msg(10, Frame.Fix64(2, heroId))))));
+
+        var qNames = NameTable.Load(namesPath, _ => { });
+        var q1Lines = new List<string>();
+        var cacheA = new RosterCache(cachePath, _ => { });
+        var q1 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheA);
+        q1.Mirror = (s, k, g, u) => q1Lines.Add(Palette.Strip(s).Trim());
+        q1.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(555, 4242, "테스터", 0, 1001));
+        bool q1ok = cacheA.Count > 0 && File.Exists(cachePath);
+
+        string cacheText = File.ReadAllText(cachePath);
+        bool q2ok = !cacheText.Contains("4242");
+
+        var q3Lines = new List<string>();
+        var cacheB = new RosterCache(cachePath, _ => { });
+        var q3 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheB);
+        q3.Mirror = (s, k, g, u) => q3Lines.Add(Palette.Strip(s).Trim());
+        q3.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 4242));
+        bool q3ok = q3Lines.Exists(l => !l.Contains("?4242"));
+
+        q3.OnFrame(new FrameHeader(Op.MatchSuccess, 0, 0, 0), Array.Empty<byte>());
+        bool q4ok = !File.Exists(cachePath) && cacheB.Count == 0;
+
+        Console.WriteLine($"  {(q1ok ? "OK  " : "FAIL")} Q1 명단을 받으면 캐시에 쌓인다 ({cacheA.Count}건)");
+        Console.WriteLine($"  {(q2ok ? "OK  " : "FAIL")} Q2 파일에 원본 id가 남지 않는다");
+        Console.WriteLine($"  {(q3ok ? "OK  " : "FAIL")} Q3 명단 없이도 이름이 되살아난다: [{string.Join(" / ", q3Lines)}]");
+        Console.WriteLine($"  {(q4ok ? "OK  " : "FAIL")} Q4 새 판이 시작되면 캐시를 버린다");
+        Console.WriteLine();
+        if (!q1ok) fails++;
+        if (!q2ok) fails++;
+        if (!q3ok) fails++;
+        if (!q4ok) fails++;
+
+        // R. 안전장치 둘: 판 이탈(씬)과 최초 캐싱 전(다른 방)
+        Console.WriteLine("=== 캐시 안전장치 ===");
+        if (File.Exists(cachePath)) File.Delete(cachePath);
+
+        var cacheC = new RosterCache(cachePath, _ => { });
+        var r1 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheC);
+        r1.Mirror = (s, k, g, u) => { };
+        r1.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(777, 5151, "나간이", 0, 1001));
+        bool r1had = File.Exists(cachePath);
+        r1.LeftGame();
+        bool r1ok = r1had && !File.Exists(cachePath) && cacheC.Count == 0;
+
+        var cacheD = new RosterCache(cachePath, _ => { });
+        var r2 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheD);
+        r2.Mirror = (s, k, g, u) => { };
+        r2.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(888, 6161, "옛방", 0, 1001));
+
+        var cacheE = new RosterCache(cachePath, _ => { });
+        var r3 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheE);
+        var r3Lines = new List<string>();
+        r3.Mirror = (s, k, g, u) => r3Lines.Add(Palette.Strip(s).Trim());
+        r3.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(999, 7171, "새방", 0, 1001));
+        r3.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 6161));
+        bool r2ok = r3Lines.Exists(l => l.Contains("?6161"));
+
+        if (File.Exists(cachePath)) File.Delete(cachePath);
+        var cacheF = new RosterCache(cachePath, _ => { });
+        var r4 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheF);
+        r4.Mirror = (s, k, g, u) => { };
+        r4.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(1234, 8181, "지킴이", 0, 1001));
+
+        var cacheG = new RosterCache(cachePath, _ => { });
+        var r5 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheG);
+        var r5Lines = new List<string>();
+        r5.Mirror = (s, k, g, u) => r5Lines.Add(Palette.Strip(s).Trim());
+        r5.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 8181));
+        bool r3ok = r5Lines.Exists(l => !l.Contains("?8181"));
+
+        Console.WriteLine($"  {(r1ok ? "OK  " : "FAIL")} R1 판을 나가면 캐시 파일이 사라진다");
+        Console.WriteLine($"  {(r2ok ? "OK  " : "FAIL")} R2 다른 방이면 지난 판 캐시를 쓰지 않는다: [{string.Join(" / ", r3Lines)}]");
+        Console.WriteLine($"  {(r3ok ? "OK  " : "FAIL")} R3 같은 방 재접속은 캐시로 되살린다: [{string.Join(" / ", r5Lines)}]");
+        Console.WriteLine();
+        if (!r1ok) fails++;
+        if (!r2ok) fails++;
+        if (!r3ok) fails++;
+
+        Console.WriteLine("=== 라운드를 모를 때 ===");
+        var rtLines = new List<string>();
+        var rt = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames);
+        rt.Mirror = (s, k, g, u) => rtLines.Add(Palette.Strip(s).Trim());
+        rt.OnFrame(new FrameHeader(Op.ThrowDice, 0, 0, 0), Frame.Cat(Frame.Fix32(1, 3), Frame.Fix64(3, 2)));
+        bool t1 = rtLines.Exists(l => l.StartsWith("[R?]"));
+        rt.OnFrame(new FrameHeader(Op.RoundStart, 0, 0, 0), Frame.Cat(Frame.Fix32(1, 4), Frame.Fix64(5, 700)));
+        rtLines.Clear();
+        rt.OnFrame(new FrameHeader(Op.ThrowDice, 0, 0, 0), Frame.Cat(Frame.Fix32(1, 3), Frame.Fix64(3, 2)));
+        bool t2 = rtLines.Exists(l => l.StartsWith("[R4]"));
+        Console.WriteLine($"  {(t1 ? "OK  " : "FAIL")} T1 라운드를 못 받았으면 [R?]");
+        Console.WriteLine($"  {(t2 ? "OK  " : "FAIL")} T2 전환을 받으면 실제 번호: [{string.Join(" / ", rtLines)}]");
+        Console.WriteLine();
+        if (!t1) fails++;
+        if (!t2) fails++;
 
         fails += Sched.Run();
 

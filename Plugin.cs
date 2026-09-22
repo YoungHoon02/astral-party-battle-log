@@ -104,8 +104,11 @@ public class Plugin : BasePlugin
         // (이유는 NameHarvest 주석 참고).
         NameHarvest.Arm(Log, names, namesPath, rebuildNames.Value);
 
+        string cachePath = Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "roster-cache.tsv");
+        var cache = new RosterCache(cachePath, Log.LogWarning);
+
         var logger = new BattleLogger(Log, path, traceFrames.Value, dumpSet,
-                                      logPlayerIds.Value, logCards.Value, names);
+                                      logPlayerIds.Value, logCards.Value, names, cache);
         _logger = logger;
         SocketTap.OnFrame = logger.OnFrame;
         // 파일은 전용 스레드가 쓰므로 종료할 때 남은 줄을 마저 쓰게 한다.
@@ -150,6 +153,7 @@ public class Plugin : BasePlugin
         // *들어갈* 때도 일어나서 방에서 받아둔 명단을 날려버린다. 그건 새 판이
         // 시작될 때(StartGame/MatchSuccess/SingleCampaign 신호) 로거가 스스로 한다.
         FramePump.OnSceneChanged = LogOverlay.OnSceneChanged;
+        LogOverlay.OnLeftGame = logger.LeftGame;
 
         try
         {

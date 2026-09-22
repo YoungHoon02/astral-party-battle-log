@@ -51,8 +51,17 @@ internal sealed class BattleLogger
 
     private readonly NameTable _names;
     private readonly Roster _roster;
+    private readonly RosterCache? _cache;
+
+    private long _cacheRoom;
     private readonly LandMap _lands = new();
     private int _round;
+
+    /// <summary>
+    /// 판 도중 합류하면 라운드 전환을 놓쳐 0으로 남는다. 0라운드는 없으므로 그대로
+    /// 찍으면 틀린 값이 된다 — 첫 전환을 받을 때까지 모른다고 표시한다.
+    /// </summary>
+    private string RoundTag => _round > 0 ? $"[R{_round}]" : "[R?]";
     private long _turnOwner;
 
     /// <summary>
@@ -186,7 +195,7 @@ internal sealed class BattleLogger
 
     public BattleLogger(ManualLogSource log, string? filePath, bool traceUnknown,
                         HashSet<int> hexDump, bool logPlayerIds, bool logCards,
-                        NameTable names)
+                        NameTable names, RosterCache? cache = null)
     {
         _log = log;
         if (filePath is not null) _file = new LogFileWriter(filePath, log.LogWarning);
@@ -195,7 +204,11 @@ internal sealed class BattleLogger
         _logPlayerIds = logPlayerIds;
         _logCards = logCards;
         _names = names;
+        _cache = cache;
+        _cache?.Load();
+        _cacheRoom = cache?.RoomId ?? 0;
         _roster = new Roster(names);
+        _roster.Cache = cache;
     }
 
     private static void Add(List<string> lines, string line)
@@ -291,9 +304,14 @@ internal sealed class BattleLogger
                         printed++;
                     }
                 Diag($"[game] {Op.Name(cmdId)}({cmdId}) roster changed={_roster.LastChanged.Count} printed={printed}");
+                if (_roster.LastChanged.Count > 0 && _cache is not null)
+                {
+                    _cache.RoomId = _roomId;
+                    _cache.Save();
+                }
                 break;
             case Op.MonsterRefresh:
-                _roster.UpdateMonster(body);
+                if (_roster.UpdateMonster(body)) _cache?.Save();
                 break;
             case Op.BattleUseCard: DecodeBattleUseCard(body); break;
             case Op.UseEffectCard: DecodeUseEffectCard(body); break;
@@ -438,7 +456,7 @@ internal sealed class BattleLogger
             }
         }
 
-        var sb = new StringBuilder($"[R{_round}] {_roster.Name(pid)} 주사위");
+        var sb = new StringBuilder($"{RoundTag} {_roster.Name(pid)} 주사위");
         if (vals.Count > 0) sb.Append($" {string.Join("+", vals)}");
 
         // movePoint가 비어 올 때가 있다. 눈의 합으로 메운다.
@@ -461,7 +479,7 @@ internal sealed class BattleLogger
             else if (field == 2) movePoint = v;
         }
         _units = (int)movePoint;
-        if (movePoint != 0) Emit($"[R{_round}] {_roster.Name(pid)} 추가 이동 {movePoint}칸");
+        if (movePoint != 0) Emit($"{RoundTag} {_roster.Name(pid)} 추가 이동 {movePoint}칸");
     }
 
     // 공개 전에는 cardId가 0으로 오므로 0 이하는 버린다.
@@ -486,13 +504,13 @@ internal sealed class BattleLogger
 
         if (noCard != 0)
         {
-            if (_logCards) Emit($"[R{_round}] {_roster.Name(pid)} 카드 안 냄");
+            if (_logCards) Emit($"{RoundTag} {_roster.Name(pid)} 카드 안 냄");
             else AdvanceOverlay(_kind);
             return;
         }
         if (cardId > 0 && _cardSubmits.Add((pid, cardId)))
         {
-            if (_logCards) Emit($"[R{_round}] {_roster.Name(pid)} 카드 제출");
+            if (_logCards) Emit($"{RoundTag} {_roster.Name(pid)} 카드 제출");
             else AdvanceOverlay(_kind);
         }
     }
@@ -527,7 +545,7 @@ internal sealed class BattleLogger
         if (useSkill != 0)
         {
             // 스킬은 카드가 아니다 — LogCards와 무관하게 남긴다.
-            var skill = new StringBuilder($"[R{_round}] {_roster.Name(pid)} 스킬 사용");
+            var skill = new StringBuilder($"{RoundTag} {_roster.Name(pid)} 스킬 사용");
             if (_names.Lookup("skill", skillId) is { } name) skill.Append($" \"{name}\"");
             AppendTargets(skill, targets);
             _kind = LineKind.Skill;
@@ -546,7 +564,7 @@ internal sealed class BattleLogger
         Said(CardCause, cardId, pid);   // 뒤따르는 UpdateHeroAttr이 머리줄을 생략한다
         _saidCardName = _logCards ? Palette.Strip(CardLabel(cardId)) : null;
         if (!_logCards) { AdvanceOverlay(_kind); return; }
-        var sb = new StringBuilder($"[R{_round}] {_roster.Name(pid)} 효과카드 {CardLabel(cardId)}");
+        var sb = new StringBuilder($"{RoundTag} {_roster.Name(pid)} 효과카드 {CardLabel(cardId)}");
         AppendTargets(sb, targets);
         Emit(sb.ToString());
     }
@@ -572,7 +590,7 @@ internal sealed class BattleLogger
         if (reroll != 0 || relicId == 0) return;
 
         string text = RelicText(relicId);
-        Emit($"[R{_round}] {_roster.Name(pid)} 칩 획득 "
+        Emit($"{RoundTag} {_roster.Name(pid)} 칩 획득 "
              + (text.Length > 0 ? text : $"#{relicId}"));
         Said(RelicCause, relicId, pid);
     }
@@ -635,7 +653,7 @@ internal sealed class BattleLogger
         if (isPursuit != 0) tags.Append(" [추격]");
         if (skillPlayer != 0) tags.Append($" [스킬 {_roster.Name(skillPlayer)}]");
 
-        Emit($"[R{_round}] PK{tags}  {attacker.Format(_roster, _names, attacking: true)}"
+        Emit($"{RoundTag} PK{tags}  {attacker.Format(_roster, _names, attacking: true)}"
              + $"  vs  {defender.Format(_roster, _names, attacking: false)}");
         Said(BattleCause, 0, attacker.PlayerId);
         _battleGroup = _group;
@@ -768,15 +786,15 @@ internal sealed class BattleLogger
         if (_causeSkillLine is { } skillLine)
         {
             lines.Remove(skillLine);
-            header = $"[R{_round}] {skillLine}";
+            header = $"{RoundTag} {skillLine}";
             alreadySaid = false;   // 사건 자체다. 문맥 때문에 지우면 안 된다
         }
         else
         {
             string subject = who != 0 ? $" {_roster.Name(who)}" : "";
             header = cause.Length > 0
-                ? $"[R{_round}]{subject} ({cause})"
-                : $"[R{_round}]{subject}";
+                ? $"{RoundTag}{subject} ({cause})"
+                : $"{RoundTag}{subject}";
         }
 
         // 효과카드가 건 버프는 원인 없이 따로 온다. 카드 이름과 같은 버프만 있으면 카드 줄에 잇는다.
@@ -830,7 +848,7 @@ internal sealed class BattleLogger
         string fromBal = heldPays ? $"{held.Ori}→{held.Curr}" : $"{g.Ori}→{g.Curr}";
         string toBal = heldPays ? $"{g.Ori}→{g.Curr}" : $"{held.Ori}→{held.Curr}";
 
-        var sb = new StringBuilder($"[R{_round}] {_roster.Name(fromPid)} → {_roster.Name(toPid)} ");
+        var sb = new StringBuilder($"{RoundTag} {_roster.Name(fromPid)} → {_roster.Name(toPid)} ");
         sb.Append(Palette.Gold($"{Math.Abs(g.Change)}골드"));
         if (held.CauseText.Length > 0) sb.Append($" ({held.CauseText})");
         sb.Append($"  [{fromBal}, {toBal}]");
@@ -908,7 +926,7 @@ internal sealed class BattleLogger
         long who = _turnOwner;
         if (who == 0 || who == _saidSkillUse) return;
         _saidSkillUse = who;
-        Emit($"[R{_round}] {_roster.Name(who)} 스킬 사용");
+        Emit($"{RoundTag} {_roster.Name(who)} 스킬 사용");
     }
 
     /// <summary>
@@ -1564,9 +1582,12 @@ internal sealed class BattleLogger
     /// **씬 전환에 걸면 안 된다.** 방에서 전투 씬으로 *들어갈* 때도 발동해서 방에서
     /// 받아둔 명단과 라운드를 통째로 지워버린다.
     /// </summary>
+    public void LeftGame() => _cache?.Discard();
+
     private void BeginGame(string why)
     {
         Diag($"[game] new game ({why}); roster/round/state reset");
+        _cache?.Discard();
         Reset();
         _roomId = 0;
         MirrorClear?.Invoke();
@@ -1589,12 +1610,15 @@ internal sealed class BattleLogger
         if (_roomId == 0)
         {
             Diag("[game] room adopted for this game");
+            // 판을 나갈 때 신호를 놓쳤거나(크래시) 다른 방으로 온 경우의 마지막 방어선.
+            if (_cacheRoom != roomId) _cache?.Discard();
         }
         else
         {
             BeginGame("room changed without a start signal");
         }
         _roomId = roomId;
+        _cacheRoom = roomId;
     }
 
     private void Reset()

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using AstralPartyBattleLog.Proto;
 
@@ -40,6 +41,8 @@ internal sealed class Roster
 
     private readonly NameTable _table;
 
+    public RosterCache? Cache;
+
     public Roster(NameTable table) => _table = table;
 
     public void Clear()
@@ -55,9 +58,39 @@ internal sealed class Roster
         if (!_entries.TryGetValue(id, out Entry? e))
         {
             // 몹이라고 단정하지 않는다. 명단이 늦게 오면 플레이어가 조용히 몹으로 찍힌다.
-            return $"?{id}";
+            if (!Restore(id, out e)) return $"?{id}";
         }
         return Palette.Player(Label(e), e.Slot);
+    }
+
+    private bool Restore(long id, out Entry? entry)
+    {
+        entry = null;
+        if (Cache is null || !Cache.TryGet(id, out RosterCache.Row row)) return false;
+        entry = Register(id, row);
+        return true;
+    }
+
+    /// <summary>
+    /// 이름표 하나를 명단에 넣는다. 번호(<c>Ordinal</c>)는 캐시에 담지 않고 여기서 새로
+    /// 매긴다 — 되살아나는 순서가 원래 등록 순서와 다를 수 있기 때문이다.
+    /// </summary>
+    private Entry Register(long id, in RosterCache.Row row)
+    {
+        var bucket = (row.IsMonster, row.Kind);
+        _kindCount.TryGetValue(bucket, out int count);
+        _kindCount[bucket] = count + 1;
+
+        var entry = new Entry
+        {
+            Kind = row.Kind,
+            Ordinal = FreeOrdinal(id, row.IsMonster, row.Kind),
+            IsMonster = row.IsMonster,
+            Slot = row.Slot,
+            HeroId = row.HeroId,
+        };
+        _entries[id] = entry;
+        return entry;
     }
 
     /// <summary>
@@ -173,18 +206,9 @@ internal sealed class Roster
         if (existing is not null && existing.Kind == kind && existing.IsMonster == isMonster) return false;
 
         if (existing is not null) Release(existing.IsMonster, existing.Kind);
-        var bucket = (isMonster, kind);
-        _kindCount.TryGetValue(bucket, out int count);
-        _kindCount[bucket] = count + 1;
-
-        _entries[id] = new Entry
-        {
-            Kind = kind,
-            Ordinal = FreeOrdinal(id, isMonster, kind),
-            IsMonster = isMonster,
-            Slot = isMonster ? -1 : (int)slot,
-            HeroId = heroId,
-        };
+        var row = new RosterCache.Row(kind, isMonster, isMonster ? -1 : (int)slot, heroId);
+        Register(id, row);
+        Cache?.Put(id, row);
         LastChanged.Add(id);
         return true;
     }
