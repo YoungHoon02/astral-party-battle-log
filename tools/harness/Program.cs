@@ -102,16 +102,16 @@ class Program
             Frame.Cat(Frame.Fix64(1, 200), Cause(1, SkillId),
                       SkillEffect(200, 9004), SkillEffect(300, 9005)));
 
-        // D. 만피 회복 → 걸러져야 한다
-        Run("D 만피 회복 (ori==curr==max, real=+2)",
+        // D. 최대 체력 회복 → 걸러져야 한다
+        Run("D 최대 체력 회복 (ori==curr==max, real=+2)",
             Frame.Cat(Frame.Fix64(1, 400), Cause(7, 0), HpEffect(400, 9, 9, 2, 2, 9, 9)));
 
         // E. 평범한 피해 → 남아야 한다
         Run("E 평범한 피해 (10→7, real=-3)",
             Frame.Cat(Frame.Fix64(1, 401), Cause(7, 0), HpEffect(401, 10, 7, -3, -3, 7, 10)));
 
-        // F. 전후 같은데 만피가 아님 → 미확정이라 남긴다
-        Run("F 전후 동일·만피 아님 (5→5/10, real=+2)",
+        // F. 전후 같은데 최대 체력이 아님 → 미확정이라 남긴다
+        Run("F 전후 동일·최대 체력 아님 (5→5/10, real=+2)",
             Frame.Cat(Frame.Fix64(1, 402), Cause(7, 0), HpEffect(402, 5, 5, 2, 2, 5, 10)));
 
         // G. 액티브 사용 직후의 메아리 → 스킬 사용만 남고 버프 줄은 사라진다

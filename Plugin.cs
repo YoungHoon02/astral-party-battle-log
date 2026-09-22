@@ -99,9 +99,6 @@ public class Plugin : BasePlugin
         var names = NameTable.Load(namesPath, Log.LogWarning);
         if (names.Count > 0) Log.LogInfo($"Loaded {names.Count} names.");
 
-        // 이름표가 없으면 게임의 설정 에셋을 Addressables로 직접 불러와 만든다.
-        // 여기서는 준비만 하고, 실제 로드와 완료 폴링은 프레임 펌프가 돌린다
-        // (이유는 NameHarvest 주석 참고).
         NameHarvest.Arm(Log, names, namesPath, rebuildNames.Value);
 
         string cachePath = Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "roster-cache.tsv");
@@ -111,8 +108,7 @@ public class Plugin : BasePlugin
                                       logPlayerIds.Value, logCards.Value, names, cache);
         _logger = logger;
         SocketTap.OnFrame = logger.OnFrame;
-        // 파일은 전용 스레드가 쓰므로 종료할 때 남은 줄을 마저 쓰게 한다.
-        // 순수 .NET 이벤트라 IL2CPP 등록 문제를 일으키지 않는다(AnimSpeedMod와 같은 방식).
+        // 순수 .NET 이벤트라 IL2CPP 델리게이트 등록 금지에 걸리지 않는다.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => logger.Close();
 
         ConfigEntry<bool> syncAnimation = Config.Bind(
@@ -147,11 +143,7 @@ public class Plugin : BasePlugin
             logger.MirrorSync = OverlaySchedule.Sync;
         }
 
-        // 씬이 바뀌면 화면만 비운다. 로비로 나왔는데 전투 로그가 떠 있으면 방해되니까.
-        //
-        // 여기서 로거 상태(명단·라운드)까지 지우면 안 된다 — 씬 전환은 게임에
-        // *들어갈* 때도 일어나서 방에서 받아둔 명단을 날려버린다. 그건 새 판이
-        // 시작될 때(StartGame/MatchSuccess/SingleCampaign 신호) 로거가 스스로 한다.
+        // 로거 상태는 씬 전환에 걸지 않는다. 게임에 들어갈 때도 씬이 바뀌어 명단이 날아간다.
         FramePump.OnSceneChanged = LogOverlay.OnSceneChanged;
         LogOverlay.OnLeftGame = logger.LeftGame;
 
@@ -160,13 +152,12 @@ public class Plugin : BasePlugin
             _harmony = new Harmony(Guid);
             _harmony.PatchAll(typeof(BeginReceivePatch));
             _harmony.PatchAll(typeof(EndReceivePatch));
-            // 오버레이를 꺼도 씬 감지는 필요하므로 항상 건다.
+            // 오버레이를 꺼도 씬 감지·이름표 수집에 필요하다.
             _harmony.PatchAll(typeof(FramePump));
             Log.LogInfo("Socket patches applied. Waiting for battle traffic.");
         }
         catch (Exception e)
         {
-            // 패치 실패가 게임을 막으면 안 된다. 로그만 남기고 조용히 비활성화.
             Log.LogError($"Socket patching failed - no battle logging will happen: {e}");
             SocketTap.OnFrame = null;
         }
@@ -174,7 +165,7 @@ public class Plugin : BasePlugin
         if (path is not null) Log.LogInfo($"Battle log file: {path}");
     }
 
-    /// <summary>값 두 개를 따로 대입하면 파일을 두 번 쓰므로 자동 저장을 잠시 끄고 한 번에 쓴다.</summary>
+    // 값 두 개를 따로 대입하면 설정 파일을 두 번 쓴다.
     private void SaveTogether(Action assign)
     {
         bool auto = Config.SaveOnConfigSet;

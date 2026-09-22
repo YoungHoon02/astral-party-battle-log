@@ -3,14 +3,7 @@ using AstralPartyBattleLog.Proto;
 
 namespace AstralPartyBattleLog.Log;
 
-/// <summary>
-/// 맵 칸 번호 → 땅 종류.
-///
-/// <c>CauseOrigin.Id</c>가 land일 때 그 값은 <b>LandType이 아니라 맵 칸 번호</b>다.
-/// 그대로 LandType으로 조회하면 번호가 우연히 유효 범위(1~27)에 들어 <b>조용히 엉뚱한
-/// 땅 이름이 붙는다.</b> 진짜 대응표는 <c>Room.Lands</c>(필드 12,
-/// <c>map&lt;int32, BaseLand&gt;</c>)에 있다.
-/// </summary>
+// CauseOrigin.Id(land)는 LandType이 아니라 맵 칸 번호다. Room.Lands(12)로 종류를 찾는다.
 internal sealed class LandMap
 {
     private readonly Dictionary<long, long> _typeByNode = new();

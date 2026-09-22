@@ -7,17 +7,7 @@ using System.Text;
 
 namespace AstralPartyBattleLog.Log;
 
-/// <summary>
-/// 판 도중 재접속·게임 재시작으로 참가자 명단(<c>RunningGameS2C</c>)을 놓쳤을 때 쓰는
-/// 이름표 캐시.
-///
-/// <b>playerId를 파일에 남기지 않는다.</b> <c>Player.Id</c>는 매치용 슬롯이 아니라 영구
-/// 계정 식별자라, 파일로 새면 로그를 공유할 때 남의 계정 정보가 같이 나간다. 그래서 키를
-/// 해시로만 적고, 조회할 때 들어온 id를 같은 방식으로 해시해 맞춘다 — 되돌릴 수단이
-/// 없으므로 파일만 얻어도 id를 복원하지 못한다.
-///
-/// 값(캐릭터·몹 이름표, 슬롯)은 게임 자산이라 민감하지 않다.
-/// </summary>
+// playerId는 영구 계정 uid라 파일에 해시로만 적는다 (docs/ARCHITECTURE.md "재접속 이름표 캐시").
 internal sealed class RosterCache
 {
     internal readonly struct Row
@@ -38,7 +28,6 @@ internal sealed class RosterCache
 
     private const string Header = "# roster cache v2 (keys are hashed; see RosterCache.cs)";
 
-    /// <summary>방 번호는 계정과 무관한 매치 식별자라 해시하지 않고 그대로 적는다.</summary>
     public long RoomId;
 
     private readonly string _path;
@@ -53,7 +42,6 @@ internal sealed class RosterCache
 
     public int Count => _rows.Count;
 
-    /// <summary>앞 8바이트만 쓴다. 한 판에 수십 명이라 충돌은 사실상 나지 않는다.</summary>
     private static string Key(long id)
     {
         Span<byte> src = stackalloc byte[8];
@@ -70,7 +58,6 @@ internal sealed class RosterCache
 
     public void Put(long id, in Row row) => _rows[Key(id)] = row;
 
-    /// <summary>수명을 짧게 두는 것이 이 캐시의 안전장치다.</summary>
     public void Discard()
     {
         _rows.Clear();

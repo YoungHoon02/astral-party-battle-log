@@ -2,25 +2,7 @@ using System;
 
 namespace AstralPartyBattleLog.Net;
 
-/// <summary>
-/// TCP 바이트 스트림에서 게임 프레임을 잘라낸다.
-///
-/// 포맷은 <c>Core.Net.Frame.AnalyzeInfoFromBuf</c> 기준 (빅엔디안):
-/// <code>
-///   offset size  field
-///   0      4     LENGTH     본문 길이
-///   4      8     SESSIONID
-///   12     2     CMDID
-///   14     1     VER1
-///   15     1     VER2
-///   16     1     VER3
-///   17     8     UPSN
-///   25     8     DOWNSN
-///   33     2     ERR
-///   ---- 35바이트 헤더 끝 ----
-///   35     LENGTH  protobuf 본문
-/// </code>
-/// </summary>
+// 헤더 형식(35바이트, 빅엔디안)은 docs/LOGGER-DESIGN.md.
 internal sealed class FrameReassembler
 {
     public const int HeaderLength = 35;
@@ -29,7 +11,7 @@ internal sealed class FrameReassembler
     private byte[] _buf = new byte[64 * 1024];
     private int _len;
 
-    /// <summary>이 스트림이 게임 프로토콜이 아니라고 판명되면 true. 이후 입력은 전부 버린다.</summary>
+    // HTTP 등 게임 프로토콜이 아닌 소켓도 같은 타입을 쓴다. 판명되면 이후 입력을 전부 버린다.
     public bool Rejected { get; private set; }
 
     public void Append(byte[] src, int offset, int count)
@@ -57,7 +39,6 @@ internal sealed class FrameReassembler
         int bodyLen = ReadInt32BE(_buf, 0);
         if (bodyLen < 0 || bodyLen > MaxBody)
         {
-            // 헤더가 말이 안 된다 = 이 소켓은 게임 프로토콜이 아니다.
             Rejected = true;
             return false;
         }

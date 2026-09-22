@@ -46,7 +46,7 @@ python tools/dump_tags.py <디컴파일루트> HeroHpChangeS2C
 | 〃 | **한 PK에 여러 장 낼 수 있다** (`RoundStartS2C.UseCardMaxNum`). 실측에서 한 사람이 3장을 냈다 — 제출 줄을 묶으면 안 되고, 같은 `CardId`(uid)가 다시 올 때만 막는다 |
 | `SelectRelicS2C`(5212) | 칩 획득의 확정 신호. `!IsReroll && RelicId != 0` (`RelicLogic`) |
 | `HeroHpChangeS2C`(1040 안) | 화면 숫자는 `RealChangeHp`, 실제 HP는 `RealHp`(0이면 `HP + RealChangeHp`) — `BattleProperty.OnLifeChanged` |
-| 〃 | **만피에서 회복을 받아도 `RealChangeHp`가 0이 아니다** (실측 10건, 전부 `CurrHp == MaxHp`). `CurrHp`와 `RealHp` 중 무엇이 화면 HP인지는 미확정 |
+| 〃 | **최대 체력에서 회복을 받아도 `RealChangeHp`가 0이 아니다** (실측 10건, 전부 `CurrHp == MaxHp`). `CurrHp`와 `RealHp` 중 무엇이 화면 HP인지는 미확정 |
 | `HeroBuffChangeS2C` | 한 메시지에 동일한 스킬·대상 버프가 여러 번 들어올 수 있다. 대상이 다르면 각각 남기고, 같은 `(스킬, 대상)`만 중복 제거한다 |
 | `TimeWastingS2C`(5308) | 결정 창 열림·닫힘 때 응답으로 온다. 측정 3에서 `UPSN != 0`, 본문 길이는 열림 14바이트·닫힘 9바이트였다. 동기화에는 헤더만 사용하고 본문은 해석하지 않는다 |
 | `HeartbeatS2C`(5004) | 주기적인 응답이라 `UPSN != 0`이어도 화면 동기화 근거가 아니다. 본문을 해석하거나 허용목록에 넣지 않는다 |

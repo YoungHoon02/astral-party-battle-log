@@ -1,12 +1,6 @@
 namespace AstralPartyBattleLog.Proto;
 
-/// <summary>
-/// 최소 protobuf 와이어 포맷 리더.
-///
-/// 게임의 protobuf 파서를 쓰지 않고 직접 읽는다. 이유는 성능이 아니라 안전이다 —
-/// 여기에 없는 메시지는 디코딩할 코드가 존재하지 않으므로, 손패 같은 내용을
-/// "실수로" 읽을 방법이 없다. 모르는 필드는 길이만 보고 건너뛴다.
-/// </summary>
+// 게임 파서를 쓰지 않는 이유는 안전이다. 디코더가 없는 메시지(손패 등)는 실수로도 읽을 수 없다.
 internal struct ProtoReader
 {
     public const int WireVarint = 0;
@@ -52,10 +46,7 @@ internal struct ProtoReader
         return false;
     }
 
-    /// <summary>
-    /// 숫자 필드 하나. 이 게임의 .proto는 숫자를 대부분 <c>sfixed32</c>/<c>sfixed64</c>로
-    /// 선언해서(enum만 varint) varint만 읽으면 값이 전부 0으로 나온다.
-    /// </summary>
+    // 이 게임은 숫자를 sfixed32/64로 보낸다(enum만 varint). varint만 읽으면 값이 조용히 0이 된다.
     public bool TryReadNumber(int wireType, out long value)
     {
         switch (wireType)
@@ -74,14 +65,13 @@ internal struct ProtoReader
         }
     }
 
-    /// <summary>little-endian 4바이트. sfixed32로 보고 부호 확장한다.</summary>
     public bool TryReadFixed32(out long value)
     {
         value = 0;
         if (_end - _pos < 4) return false;
         int raw = _buf[_pos] | (_buf[_pos + 1] << 8) | (_buf[_pos + 2] << 16) | (_buf[_pos + 3] << 24);
         _pos += 4;
-        value = raw; // int이므로 음수는 그대로 부호 확장된다
+        value = raw;
         return true;
     }
 
@@ -96,7 +86,6 @@ internal struct ProtoReader
         return true;
     }
 
-    /// <summary>length-delimited 필드의 범위를 돌려준다. 내용은 복사하지 않는다.</summary>
     public bool TryReadLengthDelimited(out int offset, out int length)
     {
         offset = 0;
@@ -131,7 +120,6 @@ internal struct ProtoReader
         return false;
     }
 
-    /// <summary>관심 없는 필드를 건너뛴다. 알 수 없는 wire type이면 false(=파싱 중단).</summary>
     public bool Skip(int wireType)
     {
         switch (wireType)
@@ -145,7 +133,7 @@ internal struct ProtoReader
             case WireFixed32:
                 return Advance(4);
             default:
-                return false; // group(3,4)은 이 프로토콜에서 안 쓰임
+                return false;
         }
     }
 
