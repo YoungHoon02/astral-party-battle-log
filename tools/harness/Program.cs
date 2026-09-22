@@ -186,27 +186,30 @@ class Program
         var sl = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
         sl.Mirror = (s, k, g, u) => { };
         sl.MirrorClear = () => sync.Add("clear");
-        sl.MirrorSync = () => sync.Add("sync");
-        string SyncOf(int cmdId, long upSn)
+        sl.MirrorSync = (cmd, len) => sync.Add($"sync{cmd}:{len}");
+        string SyncOf(int cmdId, long upSn, int bodyLen = 0)
         {
             sync.Clear();
-            sl.OnFrame(new FrameHeader(cmdId, 0, upSn, 0), Array.Empty<byte>());
+            sl.OnFrame(new FrameHeader(cmdId, 0, upSn, 0), new byte[bodyLen]);
             return string.Join(",", sync);
         }
         Console.WriteLine("=== 화면 동기화 신호 ===");
-        var kCases = new (string Label, int Cmd, long Up, string Want)[]
+        // opcode와 본문 길이를 그대로 넘겨야 한다. 분석기가 "결정 창 열림"(5308, 본문 14)만
+        // 연출 길이를 배우는 관측으로 쓰고 나머지는 커서 맞추기에만 쓰기 때문이다.
+        var kCases = new (string Label, int Cmd, long Up, int Len, string Want)[]
         {
-            ("TimeWasting(5308) 응답", Op.TimeWasting, 7, "sync"),
-            ("TimeWasting 방송(up=0)", Op.TimeWasting, 0, ""),
-            ("BattleUseCard(5036) 응답", Op.BattleUseCard, 7, "sync"),
-            ("BattleChoice(5040) 응답", Op.BattleChoice, 7, "sync"),
-            ("Heartbeat(5004) 응답", 5004, 7, ""),
-            ("RoundStart(1015) 응답", Op.RoundStart, 7, ""),
+            ("TimeWasting(5308) 결정 창 열림", Op.TimeWasting, 7, 14, "sync5308:14"),
+            ("TimeWasting(5308) 닫힘", Op.TimeWasting, 7, 9, "sync5308:9"),
+            ("TimeWasting 방송(up=0)", Op.TimeWasting, 0, 14, ""),
+            ("BattleUseCard(5036) 응답", Op.BattleUseCard, 7, 0, "sync5036:0"),
+            ("BattleChoice(5040) 응답", Op.BattleChoice, 7, 0, "sync5040:0"),
+            ("Heartbeat(5004) 응답", 5004, 7, 0, ""),
+            ("RoundStart(1015) 응답", Op.RoundStart, 7, 0, ""),
         };
         int kn = 0;
         foreach (var c in kCases)
         {
-            string res = SyncOf(c.Cmd, c.Up);
+            string res = SyncOf(c.Cmd, c.Up, c.Len);
             bool ok = res == c.Want;
             Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} K{++kn} {c.Label} → [{res}]");
             if (!ok) { fails++; Console.WriteLine($"       기대: [{c.Want}]"); }

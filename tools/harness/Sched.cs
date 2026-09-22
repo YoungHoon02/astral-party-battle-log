@@ -76,7 +76,8 @@ static class Sched
         Setup(log);
         OverlaySchedule.Line("a1", LineKind.Attack, 1, 0);
         Advance(0.2);
-        OverlaySchedule.Sync();
+        // 결정 창 열림(TimeWastingS2C, 본문 14바이트). 재생 커서를 맞추는 신호다.
+        OverlaySchedule.Sync(Op.TimeWasting, 14);
         OverlaySchedule.Line("c", LineKind.Card, 2, 0);
         Advance(0.001);
         Expect("P4 동기화는 밀린 줄을 내보내고 커서를 당긴다", "a1", "c");
@@ -129,14 +130,31 @@ static class Sched
         Expect("P9 라운드 전환 페이지는 기다리지 않는다", "<page 2>", "turn");
 
         Setup(log);
+        // 주사위 연출은 칸 수에 비례하지 않는다(실측 R²=0.19). 칸 수가 달라도 같은 길이다.
         OverlaySchedule.Line("dice", LineKind.Dice, 1, 5);
         OverlaySchedule.Line("after", LineKind.Effect, 2, 0);
         Advance(0.001);
-        Expect("P10 주사위 줄은 바로 뜨고 칸 수만큼 커서가 간다", "dice");
-        Advance(1.4);
-        Expect("P10 다섯 칸 = 1.5초 (t=1.4)");
+        Expect("P10 주사위 줄은 바로 뜨고 커서가 2.70초 간다", "dice");
+        Advance(2.6);
+        Expect("P10 t=2.6");
         Advance(0.15);
-        Expect("P10 t=1.55", "after");
+        Expect("P10 t=2.75", "after");
+
+        Setup(log);
+        OverlaySchedule.Line("d1", LineKind.Dice, 1, 1);
+        OverlaySchedule.Line("after", LineKind.Effect, 2, 0);
+        Advance(2.6);
+        Expect("P10b 한 칸도 같은 길이 (t=2.6)", "d1");
+        Advance(0.15);
+        Expect("P10b t=2.75", "after");
+
+        Setup(log);
+        OverlaySchedule.Line("m", LineKind.Move, 1, 5);
+        OverlaySchedule.Line("after", LineKind.Effect, 2, 0);
+        Advance(1.4);
+        Expect("P10c 추가 이동은 여전히 칸당 0.30초 (t=1.4)", "m");
+        Advance(0.15);
+        Expect("P10c t=1.55", "after");
 
         Setup(log);
         OverlaySchedule.Line("pk", LineKind.Attack, 1, 0);
