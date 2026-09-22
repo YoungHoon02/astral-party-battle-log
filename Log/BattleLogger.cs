@@ -29,7 +29,8 @@ internal sealed class BattleLogger
     public Action<LineKind, long, int>? MirrorAdvance;
     public Action<int, long>? MirrorNewPage;
     public Action? MirrorClear;
-    public Action? MirrorSync;
+    /// <summary>동기화 신호. 신호마다 의미가 달라서 opcode와 본문 길이를 같이 넘긴다.</summary>
+    public Action<int, int>? MirrorSync;
 
     /// <summary>
     /// 지금 해석 중인 패킷의 사건 종류·그룹·칸 수. 한 패킷에서 나온 줄은 한 그룹이라
@@ -234,7 +235,7 @@ internal sealed class BattleLogger
         }
 
         // 모든 응답이 사용자 입력은 아니다. 실측에서 화면 단계와 대응한 응답만 동기화한다.
-        if (header.UpSn != 0 && Op.TimingSync.Contains(cmdId)) MirrorSync?.Invoke();
+        if (header.UpSn != 0 && Op.TimingSync.Contains(cmdId)) MirrorSync?.Invoke(cmdId, body.Length);
 
         if (Op.GameEntry.Contains(cmdId))
         {
