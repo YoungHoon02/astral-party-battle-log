@@ -13,7 +13,7 @@ if ($plugin -notmatch ('\[BepInPlugin\(Guid,\s*"Astral Party Battle Log",\s*"' +
     throw 'Plugin.cs and project versions differ.'
 }
 
-& dotnet build $project -c $Configuration
+& dotnet build $project -c $Configuration --no-restore
 if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
 
 $dll = Join-Path $root "bin/$Configuration/net6.0/AstralPartyBattleLog.dll"

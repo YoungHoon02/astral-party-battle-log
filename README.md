@@ -1,6 +1,6 @@
 # Astral Party Battle Log
 
-[![Latest pre-release](https://img.shields.io/github/v/release/YoungHoon02/astral-party-battle-log?include_prereleases&sort=semver&style=for-the-badge&logo=github&label=download)](../../releases)
+[![Latest release](https://img.shields.io/github/v/release/YoungHoon02/astral-party-battle-log?sort=semver&style=for-the-badge&logo=github&label=download)](../../releases)
 
 Astral Party의 전투 흐름을 라운드별로 정리해 주는 BepInEx 플러그인입니다.
 게임 안에서는 오버레이로 확인할 수 있고, 같은 내용이 `battle-log.txt`에도 저장됩니다.
@@ -28,6 +28,12 @@ Astral Party의 전투 흐름을 라운드별로 정리해 주는 BepInEx 플러
 - **F9**로 켜고 끕니다. 단축키는 설정에서 변경할 수 있습니다.
 - 픽창이 끝나고 전투 화면으로 넘어가면 저절로 뜨고, 판이 끝나 전투 화면을 나가면
   숨습니다. 로비나 지난 판에서 F9로 껐더라도 새 판에서는 다시 표시됩니다.
+
+## v0.3.0
+
+- 주사위 결과와 PK 결과를 게임 화면의 주사위 눈·타격 장면에 맞춰 보여줍니다.
+- 별도의 타격 신호가 없는 PK는 해당 연출이 끝나는 순간 결과를 보여줍니다.
+- 앞 카드·스킬 기록의 추정 시간이 남아 있어도 화면이 뒤 사건에 도달하면 대기 중인 기록을 순서대로 표시합니다.
 
 ## v0.2.0
 
@@ -123,14 +129,13 @@ BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성�
 
 ## 알아둘 것
 
-**전투 결과가 게임 애니메이션보다 먼저 표시될 수 있습니다.** 서버가 보낸 정보를
-애니메이션 재생 전에 기록하기 때문입니다. PvP에서는 작은 정보 우위가 될 수 있으므로
-사용 전에 이 점과 게임 이용약관을 확인해 주세요.
+파일 로그는 서버에서 전투 결과를 받는 즉시 기록하므로 게임 애니메이션보다 먼저 남을 수 있습니다.
+PvP에서는 작은 정보 우위가 될 수 있으므로 사용 전에 이 점과 게임 이용약관을 확인해 주세요.
 
 오버레이는 주사위·PK 결과 줄을 게임 화면에 주사위 눈이나 PK 타격이 나타나는 순간에 맞춰
 보여줍니다. 그 밖의 줄은 연출 길이를 누적해 화면 표시 시점을 추정하므로 먼저 또는 늦게 표시될 수
-있습니다. 몬스터 주사위처럼 화면 신호가 없는 결과는 다음 신호가 올 때까지 늦게 표시될 수 있습니다(최대
-60초). 파일 로그에는 수신 즉시 기록됩니다. 자세한 내용은 [오버레이 연출 동기화](docs/OVERLAY-TIMING.md)를
+있습니다. 타격 신호가 없는 PK는 해당 연출이 끝날 때 표시합니다. 몬스터 주사위처럼 화면 신호가 없는
+결과는 다음 화면 신호까지 늦게 표시될 수 있습니다. 자세한 내용은 [오버레이 연출 동기화](docs/OVERLAY-TIMING.md)를
 참고하세요.
 
 **상대 손패는 읽지 않습니다.** 손패 정보를 처리하는 기능 자체가 포함되어 있지

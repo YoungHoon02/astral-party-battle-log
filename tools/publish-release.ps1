@@ -1,5 +1,6 @@
 param(
     [switch]$Draft,
+    [switch]$Prerelease,
     [string]$Configuration = 'Release'
 )
 
@@ -76,8 +77,9 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $ghArgs = @('release', 'create', $tag, $zip,
-    '--title', "$tag (pre-release)", '--notes-file', $notesFile,
-    '--prerelease', '--target', 'main', '--repo', $repo)
+    '--title', $tag, '--notes-file', $notesFile,
+    '--target', 'main', '--repo', $repo)
+if ($Prerelease) { $ghArgs += '--prerelease' }
 if ($Draft) { $ghArgs += '--draft' }
 & gh @ghArgs
 if ($LASTEXITCODE -ne 0) {

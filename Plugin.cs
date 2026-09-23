@@ -12,7 +12,7 @@ using HarmonyLib;
 
 namespace AstralPartyBattleLog;
 
-[BepInPlugin(Guid, "Astral Party Battle Log", "0.2.0")]
+[BepInPlugin(Guid, "Astral Party Battle Log", "0.3.0")]
 public class Plugin : BasePlugin
 {
     public const string Guid = "astralparty.battlelog";
