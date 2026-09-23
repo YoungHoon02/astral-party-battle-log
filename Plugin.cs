@@ -114,16 +114,13 @@ public class Plugin : BasePlugin
         ConfigEntry<bool> syncAnimation = Config.Bind(
             "Overlay", "SyncWithAnimation", true,
             "오버레이 줄을 게임 화면이 그 장면에 도달할 때 보여준다. 게임은 연출을 차례대로 " +
-            "재생하므로 봇 차례가 이어지면 화면이 수십 초 뒤처진다. 파일 로그는 영향이 없다.");
+            "재생하므로 봇 차례가 이어지면 화면이 수십 초 뒤처진다. 주사위·PK 결과는 화면에 주사위 눈이나 " +
+            "PK 타격이 보이는 순간에 맞추고, 나머지 줄은 연출 길이로 추정한다. 화면 신호가 없는 몬스터 " +
+            "주사위는 다음 신호까지 늦게 뜰 수 있다. 끄면 받는 즉시 보여준다. 파일 로그는 영향이 없다.");
         ConfigEntry<int> syncMaxLagMs = Config.Bind(
             "Overlay", "SyncMaxLagMs", 60000,
             "화면 재생 덩어리가 수신보다 뒤처져 시작할 수 있는 최대 시간(밀리초). " +
             "실측 최대 지연은 약 37초였다.");
-        ConfigEntry<bool> screenSignals = Config.Bind(
-            "Overlay", "ScreenSignals", false,
-            "주사위·PK 결과 줄을 추정 대신 게임 화면 신호(주사위 눈·PK 타격)에 맞춰 공개한다. 실험 기능이며 " +
-            "봇전에서만 확인했고 PvP는 검증하지 않았다. 몬스터 주사위는 다음 신호까지 늦게 뜰 수 있다. " +
-            "끄면 연출 길이 추정으로 공개하며, 봇 차례나 몬스터 연출이 긴 맵에서는 결과가 화면보다 먼저 뜰 수 있다.");
         ConfigEntry<bool> traceTiming = Config.Bind(
             "Diagnostics", "TraceTiming", false,
             "화면 지연을 재기 위한 기록(수신 프레임 헤더, PK 진행, 표시 시각)을 BepInEx 로그에 남긴다. " +
@@ -140,8 +137,7 @@ public class Plugin : BasePlugin
                             toggle, scrollLines.Value,
                             new Vector2(overlayX.Value, overlayY.Value),
                             pos => SaveTogether(() => { overlayX.Value = pos.x; overlayY.Value = pos.y; }));
-            OverlaySchedule.Init(Log, syncAnimation.Value, syncMaxLagMs.Value, traceTiming.Value,
-                                 screenSignals.Value);
+            OverlaySchedule.Init(Log, syncAnimation.Value, syncMaxLagMs.Value, traceTiming.Value);
             logger.Mirror = OverlaySchedule.Line;
             logger.MirrorAdvance = OverlaySchedule.Advance;
             logger.MirrorNewPage = OverlaySchedule.Page;
@@ -161,10 +157,10 @@ public class Plugin : BasePlugin
             // 오버레이를 꺼도 씬 감지·이름표 수집에 필요하다.
             _harmony.PatchAll(typeof(FramePump));
             Log.LogInfo("Socket patches applied. Waiting for battle traffic.");
-            if (OverlaySchedule.ScreenSignalsEnabled
-                && !ScreenProbe.Init(Log, _harmony, OverlaySchedule.Screen, OverlaySchedule.DisableScreenSignals))
+            if (OverlaySchedule.UsesScreenSignals
+                && !ScreenProbe.Init(Log, _harmony, OverlaySchedule.Screen, OverlaySchedule.FallBackToModel))
             {
-                OverlaySchedule.DisableScreenSignals();
+                OverlaySchedule.FallBackToModel();
                 Log.LogWarning("Screen signal hook failed; overlay falls back to estimated timing.");
             }
         }

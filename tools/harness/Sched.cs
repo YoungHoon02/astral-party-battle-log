@@ -35,8 +35,9 @@ static class Sched
 
     static void Setup(ManualLogSource log, bool enabled = true, int maxLagMs = 60000, bool signals = false)
     {
-        OverlaySchedule.Init(log, enabled, maxLagMs, false, signals);
+        OverlaySchedule.Init(log, enabled, maxLagMs, false);
         OverlaySchedule.Discard();
+        if (!signals) OverlaySchedule.FallBackToModel();
         Advance(0.001);
         Out.Clear();
     }
@@ -789,7 +790,7 @@ static class Sched
         OverlaySchedule.Line("card", LineKind.Card, 2, 0, 0);
         Advance(1.0);
         Expect("G21 신호 대기 중");
-        OverlaySchedule.DisableScreenSignals();
+        OverlaySchedule.FallBackToModel();
         Advance(0.55);
         Expect("G21 신호가 끊기면 대기 줄을 모델 예약으로 넘긴다 (t=1.55)");
         Advance(0.1);
@@ -843,7 +844,7 @@ static class Sched
         Setup(log, signals: false);
         OverlaySchedule.Line("d", Dice, 1, 3, 3);
         Advance(1.55);
-        Expect("G16 신호를 끄면 기존 모델(쉬는 화면 1.60초)");
+        Expect("G16 후킹 실패로 모델로 돌아가면 기존 모델(쉬는 화면 1.60초)");
         Advance(0.1);
         Expect("G16 t=1.65", "d");
     }

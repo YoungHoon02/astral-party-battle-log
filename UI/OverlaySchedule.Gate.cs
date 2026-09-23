@@ -79,11 +79,11 @@ internal static partial class OverlaySchedule
     private static Window? _barrier;
     private static long _barrierCapUs;
 
-    public static bool ScreenSignalsEnabled => _gating;
+    public static bool UsesScreenSignals => _gating;
 
     // 후킹 설치 실패나 반복 오류로 신호가 끊기면 모델 경로로 돌아간다. 조기 표시 위험은 측정 4 넷째 판과 같다.
     // 대기 중인 줄은 신호를 더 받을 수 없으므로 모델 예약으로 넘긴다. 메인 스레드에서만 부른다.
-    public static void DisableScreenSignals()
+    public static void FallBackToModel()
     {
         if (!_gating) return;
         _gating = false;
