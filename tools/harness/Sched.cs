@@ -999,6 +999,30 @@ static class Sched
         Advance(0.001);
         Expect("TB5 2초가 아닌 팁으로는 배너를 배우지 않는다", "t");
 
+        // 넷째 수집 21:35:27: 화면이 밀린 채 배너를 배우면, 배우기 전에 받은 차례 줄의 배너가 나중에 뜬다.
+        // 그 배너를 뒤 차례 줄에 짝지으면 앞 주사위·PK를 화면보다 먼저 푼다.
+        Setup(log, signals: true);
+        OverlaySchedule.Line("a", LineKind.Turn, 1, 0, 0);
+        OverlaySchedule.Line("b", LineKind.Turn, 2, 0, 0);
+        OverlaySchedule.Line("c", LineKind.Turn, 3, 0, 0);
+        Advance(0.001);
+        Out.Clear();
+        LearnBanner();
+        OverlaySchedule.Line("dc", Dice, 4, 3, 807);
+        OverlaySchedule.Line("t", LineKind.Turn, 5, 0, 0);
+        Advance(0.1);
+        Sig(ScreenSignal.TopTip, true, instance: 7);
+        Advance(0.001);
+        Expect("TB6 배우기 전 차례 줄(c)의 배너는 장부가 소비하고 뒤 줄을 풀지 않는다");
+        Sig(ScreenSignal.TopTip, false, instance: 7);
+        Sig(ScreenSignal.DiceFace, false, 7);
+        Sig(ScreenSignal.DiceFace, false, 8);
+        Advance(0.001);
+        Expect("TB6 주사위는 자기 신호로", "dc");
+        Sig(ScreenSignal.TopTip, true, instance: 7);
+        Advance(0.001);
+        Expect("TB6 다음 배너가 뒤 차례 줄을 푼다", "t");
+
         RunLoggerTags(log);
 
         Setup(log, signals: false);
