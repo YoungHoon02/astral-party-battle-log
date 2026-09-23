@@ -132,6 +132,11 @@ BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성�
 표시될 수 있습니다. 파일 로그에는 수신 즉시 기록됩니다. 자세한 내용과 검증 상태는
 [오버레이 연출 동기화](docs/OVERLAY-TIMING.md)를 참고하세요.
 
+**실험 기능 `Overlay.ScreenSignals`(기본 꺼짐).** 켜면 오버레이의 주사위·PK 결과 줄을 추정 대신
+게임 화면에 주사위 눈이나 PK 타격이 나타나는 순간에 맞춰 보여줍니다. 봇전에서만 확인했으며
+**PvP에서는 검증하지 않았습니다.** 몬스터 주사위처럼 화면 신호가 없는 결과는 다음 신호가 올 때까지
+늦게 표시될 수 있습니다(최대 60초). 파일 로그에는 영향이 없습니다.
+
 **상대 손패는 읽지 않습니다.** 손패 정보를 처리하는 기능 자체가 포함되어 있지
 않습니다. 읽는 정보의 범위와 기술적인 근거는
 [기여 안내](CONTRIBUTING.md#카드에-그은-선)에 정리되어 있습니다.
@@ -158,6 +163,7 @@ BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성�
 | `Overlay.PositionY` | -1 | 창 왼쪽 위 모서리의 세로 위치 (위에서부터). -1이거나 값을 지우면 화면 왼쪽 아래 기본 위치 |
 | `Overlay.SyncWithAnimation` | true | 오버레이 줄의 표시 시점을 연출에 맞춰 추정합니다. 파일 로그는 그대로입니다 |
 | `Overlay.SyncMaxLagMs` | 60000 | 화면 재생 시작 시각의 수신 대비 최대 지연(밀리초) |
+| `Overlay.ScreenSignals` | false | 실험 기능. 주사위·PK 결과를 게임 화면의 주사위 눈·타격에 맞춰 표시합니다. PvP 미검증 |
 | `Diagnostics.TraceTiming` | false | 표시 시점 진단 기록. 켜면 F10으로 화면에서 본 시각을 남깁니다 |
 | `Output.WriteFile` | true | `battle-log.txt`에도 남기기 |
 | `Output.LogCards` | true | 공개된 카드 기록 |
@@ -171,6 +177,7 @@ BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성�
 | [아키텍처 및 제약](docs/ARCHITECTURE.md) | 현재 구현 구조와 반드시 지켜야 할 기술 제약 |
 | [프로토콜 필드](docs/protocol-fields.md) | 디코딩하는 메시지와 필드 배치 |
 | [오버레이 연출 동기화](docs/OVERLAY-TIMING.md) | 표시 지연 구조와 측정 절차 |
+| [화면 신호로 결과 공개](docs/SIGNAL-GATING.md) | `ScreenSignals`의 공개 규칙, 검증 범위, 남은 한계 |
 | [조사 기록](docs/FINDINGS.md) | 구현 전에 확인한 게임 구조와 근거 |
 | [초기 설계 기록](docs/LOGGER-DESIGN.md) | 현재 구현과 다를 수 있는 초기 설계 결정 |
 

@@ -12,7 +12,7 @@ namespace AstralPartyBattleLog.UI;
 /// 로그 줄을 게임 화면이 그 장면에 도달할 때 오버레이에 내보낸다.
 /// 재생 모델과 측정값은 <c>docs/OVERLAY-TIMING.md</c>.
 /// </summary>
-internal static class OverlaySchedule
+internal static partial class OverlaySchedule
 {
     private enum Signal { Line, Page, Clear, Sync, Advance }
 
@@ -27,12 +27,13 @@ internal static class OverlaySchedule
         public readonly int Generation;
         public readonly string? Text;
         public readonly int Round;
+        public readonly int Detail;
 
         public Item(Signal signal, LineKind kind, long group, int units, long receivedUs, float speed,
-                    int generation, string? text, int round)
+                    int generation, string? text, int round, int detail)
         {
             Signal = signal; Kind = kind; Group = group; Units = units; ReceivedUs = receivedUs;
-            Speed = speed; Generation = generation; Text = text; Round = round;
+            Speed = speed; Generation = generation; Text = text; Round = round; Detail = detail;
         }
     }
 
@@ -40,12 +41,14 @@ internal static class OverlaySchedule
     {
         public readonly Item Item;
         public readonly long DueUs;
+        public readonly long FloorUs;
         public readonly long Seq;
 
-        public Scheduled(Item item, long dueUs, long seq)
+        public Scheduled(Item item, long dueUs, long floorUs, long seq)
         {
             Item = item;
             DueUs = dueUs;
+            FloorUs = floorUs;
             Seq = seq;
         }
     }
@@ -59,6 +62,8 @@ internal static class OverlaySchedule
     private const long GameStartUs = 18_150_000;
     private const long StepUs = 300_000;
     private const long DiceUs = 2_700_000;
+    private const long IdleAttackRevealUs = 4_350_000;
+    private const long IdleDiceRevealUs = 1_600_000;
 
     private static readonly ConcurrentQueue<Item> Incoming = new();
     private static readonly Queue<Scheduled> Waiting = new();
@@ -76,6 +81,7 @@ internal static class OverlaySchedule
     private static long _cursorUs = long.MinValue;
     private static long _lastGroup = -1;
     private static long _lastGroupDueUs;
+    private static long _lastGroupFloorUs;
     private static long _seq;
     private static long _forceThroughSeq = -1;
     private static long _lastTracedGroup = -1;
@@ -85,9 +91,12 @@ internal static class OverlaySchedule
 
     public static bool TraceTiming => TimingTrace.Enabled;
 
-    public static void Init(ManualLogSource log, bool enabled, int maxLagMs, bool traceTiming)
+    public static void Init(ManualLogSource log, bool enabled, int maxLagMs, bool traceTiming,
+                            bool screenSignals = false)
     {
         _enabled = enabled;
+        _gating = enabled && screenSignals;
+        _anchorUs = long.MinValue;
         _maxLagUs = Math.Max(0, maxLagMs) * 1000L;
         TimingTrace.Init(log, traceTiming);
     }
@@ -113,6 +122,9 @@ internal static class OverlaySchedule
     public static void Line(string text, LineKind kind, long group, int units) =>
         Push(Signal.Line, kind, group, units, text, 0);
 
+    public static void Line(string text, LineKind kind, long group, int units, int detail) =>
+        Push(Signal.Line, kind, group, units, text, 0, detail);
+
     public static void Advance(LineKind kind, long group, int units) =>
         Push(Signal.Advance, kind, group, units, null, 0);
 
@@ -134,21 +146,28 @@ internal static class OverlaySchedule
         Interlocked.Increment(ref _generation);
     }
 
-    private static void Push(Signal signal, LineKind kind, long group, int units, string? text, int round) =>
+    private static void Push(Signal signal, LineKind kind, long group, int units, string? text, int round,
+                             int detail = 0) =>
         Incoming.Enqueue(new Item(signal, kind, group, units, Volatile.Read(ref _nowUs),
                                   Volatile.Read(ref _speed), Volatile.Read(ref _generation),
-                                  text, round));
+                                  text, round, detail));
 
     public static void Pump(Action<string> line, Action<int> page, Action clear)
     {
         long now = _nowUs;
+        if (_gating)
+        {
+            PumpGated(now, line, page, clear);
+            return;
+        }
 
         while (Incoming.TryDequeue(out Item item))
         {
             if (IsStale(item)) continue;
             long seq = ++_seq;
             if (item.Signal == Signal.Sync) _forceThroughSeq = seq;
-            Waiting.Enqueue(new Scheduled(item, DueOf(item), seq));
+            long due = DueOf(item, out long floor);
+            Waiting.Enqueue(new Scheduled(item, due, floor, seq));
         }
 
         while (Waiting.Count > 0)
@@ -159,7 +178,10 @@ internal static class OverlaySchedule
                 Waiting.Dequeue();
                 continue;
             }
-            if (head.Seq > _forceThroughSeq && head.DueUs > now && Waiting.Count <= MaxWaiting) break;
+            // 동기화는 밀린 줄을 앞당기지만 결과 공개 하한까지만이다. 본인 주사위는 결정 창 닫힘(5308)이
+            // 수 ms 뒤에 따라와, 하한이 없으면 공개 지연이 곧바로 무시된다(측정 4 셋째 판).
+            long ready = head.Seq <= _forceThroughSeq ? head.FloorUs : head.DueUs;
+            if (ready > now && Waiting.Count <= MaxWaiting) break;
 
             Waiting.Dequeue();
             Release(head, now, line, page, clear);
@@ -173,12 +195,15 @@ internal static class OverlaySchedule
 
     // 새 덩어리는 max(수신, 커서)에 시작하고 커서를 시작 + 연출 길이로 민다. 동기화는 커서를
     // 그 시각으로 되돌리거나 당겨, 모델 오차가 내 차례마다 0으로 돌아간다.
-    private static long DueOf(Item item)
+    private static long DueOf(Item item, out long floor)
     {
+        floor = item.ReceivedUs;
         if (item.Generation != _scheduleGeneration || item.Signal == Signal.Clear)
         {
             _scheduleGeneration = item.Generation;
-            _cursorUs = item.ReceivedUs;
+            // 앵커는 판 전환(ResetGating)에서만 지운다. 신호로 공개한 줄은 여기를 거치지 않아, 그 뒤 첫 줄에서
+            // 지우면 방금 세운 앵커가 사라져 뒤 줄이 몰려 나온다(하네스 G13).
+            _cursorUs = Math.Max(item.ReceivedUs, _anchorUs);
             _lastGroup = -1;
             ResetSegment(item.ReceivedUs);
         }
@@ -186,31 +211,41 @@ internal static class OverlaySchedule
         if (item.Signal is Signal.Sync or Signal.Clear)
         {
             if (item.Signal == Signal.Sync) TraceSegment(item);
-            _cursorUs = item.ReceivedUs;
+            _cursorUs = Math.Max(item.ReceivedUs, _anchorUs);
             _lastGroup = -1;
             ResetSegment(item.ReceivedUs);
             return item.ReceivedUs;
         }
 
-        if (item.Group >= 0 && item.Group == _lastGroup) return _lastGroupDueUs;
+        if (item.Group >= 0 && item.Group == _lastGroup)
+        {
+            floor = _lastGroupFloorUs;
+            return _lastGroupDueUs;
+        }
 
+        bool idle = item.ReceivedUs >= _cursorUs;
         if (item.ReceivedUs > _cursorUs) _segIdleUs += item.ReceivedUs - _cursorUs;
         Tally(item);
-        TraceItem(item);
+        TraceItem(item, idle);
 
         long start = Math.Max(item.ReceivedUs, _cursorUs);
-        start = Math.Min(start, item.ReceivedUs + _maxLagUs);
+        // 장벽 뒤에서 기다린 줄은 앵커부터 지연을 센다. 수신 기준이면 모두 앵커로 당겨져 몰려 나온다(하네스 G13).
+        start = Math.Min(start, Math.Max(item.ReceivedUs, _anchorUs) + _maxLagUs);
+        start = Math.Max(start, _anchorUs);
 
         long due = start;
         if (_enabled)
         {
             float speed = item.Speed;
-            due += (long)(RevealOf(item) / speed);
+            due += (long)(RevealOf(item, idle) / speed);
+            floor += (long)(RevealOf(item, idle: true) / speed);
+            due = Math.Max(due, floor);
             _cursorUs = start + (long)(DurationOf(item) / speed);
         }
 
         _lastGroup = item.Group;
         _lastGroupDueUs = due;
+        _lastGroupFloorUs = floor;
         return due;
     }
 
@@ -238,11 +273,12 @@ internal static class OverlaySchedule
         }
     }
 
-    private static void TraceItem(Item item)
+    private static void TraceItem(Item item, bool idle)
     {
         if (!TraceTiming) return;
         TimingTrace.Write($"segitem kind={item.Kind.ToString().ToLowerInvariant()} units={item.Units} "
-                          + $"at={(item.ReceivedUs - _segStartUs) / 1000}ms speed={item.Speed:0.##}");
+                          + $"at={(item.ReceivedUs - _segStartUs) / 1000}ms speed={item.Speed:0.##} "
+                          + $"idle={(idle ? 1 : 0)}");
     }
 
     private static void TraceSegment(Item sync)
@@ -256,7 +292,16 @@ internal static class OverlaySchedule
                           + $"skill={_segSkill} steps={_segSteps} start={_segGameStart}");
     }
 
-    private static long RevealOf(Item item) => item.Kind == LineKind.Attack ? AttackRevealUs : 0;
+    // 화면이 쉬고 있을 때(수신이 커서보다 늦음) 시작한 덩어리는 줄이 연출 시작과 함께 나가 결과가
+    // 먼저 드러났다(측정 4: 주사위 −1.1~1.3초, PK −1.3~2.4초). 밀린 덩어리는 이미 늦으므로 그대로 둔다.
+    // 공개 시점만 늦추고 다음 사건을 위한 연출 길이(DurationOf)는 바꾸지 않는다.
+    // 쉬는 화면 값은 "수신 뒤 결과가 보이기까지의 최소 시간"이라 밀린 덩어리·동기화에도 하한으로 쓴다.
+    private static long RevealOf(Item item, bool idle) => item.Kind switch
+    {
+        LineKind.Attack => idle ? IdleAttackRevealUs : AttackRevealUs,
+        LineKind.Dice when idle => IdleDiceRevealUs,
+        _ => 0,
+    };
 
     private static long DurationOf(Item item) => item.Kind switch
     {

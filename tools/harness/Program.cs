@@ -76,7 +76,7 @@ class Program
         var lines = new List<string>();
 
         var logger = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
-        logger.Mirror = (s, k, g, u) => lines.Add(Palette.Strip(s));
+        logger.Mirror = (s, k, g, u, _) => lines.Add(Palette.Strip(s));
 
         void Run(string label, byte[] body)
         {
@@ -136,7 +136,7 @@ class Program
 
         // I. 로거가 줄마다 종류·그룹을 제대로 붙이는가
         var tagged = new List<string>();
-        logger.Mirror = (s, k, g, u) => tagged.Add($"{k}#{g}u{u} {Palette.Strip(s).Trim()}");
+        logger.Mirror = (s, k, g, u, _) => tagged.Add($"{k}#{g}u{u} {Palette.Strip(s).Trim()}");
         logger.MirrorNewPage = (r, g) => tagged.Add($"Page#{g} R{r}");
         // PK 결과 (Battle {1: {1:id, 2:atk{1:pid}, 3:def{1:pid}, 5:isEnd}})
         logger.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), Frame.Msg(1, Frame.Cat(
@@ -160,7 +160,7 @@ class Program
         var hidden = new List<string>();
         var adv = new List<string>();
         var noCards = new BattleLogger(log, null, false, new HashSet<int>(), false, false, names);
-        noCards.Mirror = (s, k, g, u) => hidden.Add($"{k} {Palette.Strip(s).Trim()}");
+        noCards.Mirror = (s, k, g, u, _) => hidden.Add($"{k} {Palette.Strip(s).Trim()}");
         noCards.MirrorAdvance = (k, g, u) => adv.Add(k.ToString());
         noCards.OnFrame(new FrameHeader(Op.BattleUseCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 900), Frame.Fix32(2, 31)));
         noCards.OnFrame(new FrameHeader(Op.BattleUseCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 901), Frame.Varint(3, 1)));
@@ -184,7 +184,7 @@ class Program
         //    하트비트처럼 화면과 무관한 응답까지 동기화로 보면 로그가 화면보다 먼저 나온다.
         var sync = new List<string>();
         var sl = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
-        sl.Mirror = (s, k, g, u) => { };
+        sl.Mirror = (s, k, g, u, _) => { };
         sl.MirrorClear = () => sync.Add("clear");
         sl.MirrorSync = (cmd, len) => sync.Add($"sync{cmd}:{len}");
         string SyncOf(int cmdId, long upSn, int bodyLen = 0)
@@ -219,7 +219,7 @@ class Program
         // L. 쓰러진 대상의 버프 해제는 대상별 한 줄로 합친다
         var fell = new List<string>();
         var dl = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
-        dl.Mirror = (s, k, g, u) => fell.Add(Palette.Strip(s).Trim());
+        dl.Mirror = (s, k, g, u, _) => fell.Add(Palette.Strip(s).Trim());
         static byte[] BuffOp(long target, long uid, int buffId, int op) =>
             Frame.Msg(4, Frame.Cat(
                 Frame.Fix64(1, target),
@@ -254,7 +254,7 @@ class Program
         // M. 게임 종료 구분선은 뒤따르는 정리성 갱신 다음에 나온다
         var end = new List<string>();
         var el = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
-        el.Mirror = (s, k, g, u) => end.Add(Palette.Strip(s).Trim());
+        el.Mirror = (s, k, g, u, _) => end.Add(Palette.Strip(s).Trim());
         el.OnFrame(new FrameHeader(Op.GameFinish, 0, 0, 0), Array.Empty<byte>());
         el.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 960), HpEffect(960, 3, 2, -1, -1, 2, 10)));
         bool m1 = !end.Exists(l => l.Contains("게임 종료"));
@@ -270,7 +270,7 @@ class Program
         // N. 행위자 없는 메시지의 주어, 스택 이름, 레벨 업, 효과카드 버프
         var subj = new List<string>();
         var sj = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
-        sj.Mirror = (s, k, g, u) => subj.Add(Palette.Strip(s).Trim());
+        sj.Mirror = (s, k, g, u, _) => subj.Add(Palette.Strip(s).Trim());
         static byte[] Counter(int field, long target, int ori, int curr) =>
             Frame.Msg(4, Frame.Cat(Frame.Fix64(1, target), Frame.Msg(field, Frame.Cat(
                 Frame.Fix64(1, target), Frame.Fix32(2, curr - ori), Frame.Fix32(3, ori), Frame.Fix32(4, curr)))));
@@ -324,7 +324,7 @@ class Program
         // O. 등록보다 먼저 버프를 받은 새 몬스터 — 등록이 따라오면 이름이 붙는다
         var spawn = new List<string>();
         var ol = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
-        ol.Mirror = (s, k, g, u) => spawn.Add(Palette.Strip(s).Trim());
+        ol.Mirror = (s, k, g, u, _) => spawn.Add(Palette.Strip(s).Trim());
         void Monster(long id, string nick) => ol.OnFrame(new FrameHeader(Op.MonsterRefresh, 0, 0, 0),
             Frame.Msg(1, Frame.Cat(Frame.Fix64(1, id), Frame.Msg(2, System.Text.Encoding.UTF8.GetBytes(nick)))));
         void Beat() => ol.OnFrame(new FrameHeader(5004, 0, 7, 0), Array.Empty<byte>());
@@ -366,7 +366,7 @@ class Program
         var q1Lines = new List<string>();
         var cacheA = new RosterCache(cachePath, _ => { });
         var q1 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheA);
-        q1.Mirror = (s, k, g, u) => q1Lines.Add(Palette.Strip(s).Trim());
+        q1.Mirror = (s, k, g, u, _) => q1Lines.Add(Palette.Strip(s).Trim());
         q1.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(555, 4242, "테스터", 0, 1001));
         bool q1ok = cacheA.Count > 0 && File.Exists(cachePath);
 
@@ -376,7 +376,7 @@ class Program
         var q3Lines = new List<string>();
         var cacheB = new RosterCache(cachePath, _ => { });
         var q3 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheB);
-        q3.Mirror = (s, k, g, u) => q3Lines.Add(Palette.Strip(s).Trim());
+        q3.Mirror = (s, k, g, u, _) => q3Lines.Add(Palette.Strip(s).Trim());
         q3.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 4242));
         bool q3ok = q3Lines.Exists(l => !l.Contains("?4242"));
 
@@ -399,7 +399,7 @@ class Program
 
         var cacheC = new RosterCache(cachePath, _ => { });
         var r1 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheC);
-        r1.Mirror = (s, k, g, u) => { };
+        r1.Mirror = (s, k, g, u, _) => { };
         r1.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(777, 5151, "나간이", 0, 1001));
         bool r1had = File.Exists(cachePath);
         r1.LeftGame();
@@ -407,13 +407,13 @@ class Program
 
         var cacheD = new RosterCache(cachePath, _ => { });
         var r2 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheD);
-        r2.Mirror = (s, k, g, u) => { };
+        r2.Mirror = (s, k, g, u, _) => { };
         r2.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(888, 6161, "옛방", 0, 1001));
 
         var cacheE = new RosterCache(cachePath, _ => { });
         var r3 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheE);
         var r3Lines = new List<string>();
-        r3.Mirror = (s, k, g, u) => r3Lines.Add(Palette.Strip(s).Trim());
+        r3.Mirror = (s, k, g, u, _) => r3Lines.Add(Palette.Strip(s).Trim());
         r3.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(999, 7171, "새방", 0, 1001));
         r3.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 6161));
         bool r2ok = r3Lines.Exists(l => l.Contains("?6161"));
@@ -421,13 +421,13 @@ class Program
         if (File.Exists(cachePath)) File.Delete(cachePath);
         var cacheF = new RosterCache(cachePath, _ => { });
         var r4 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheF);
-        r4.Mirror = (s, k, g, u) => { };
+        r4.Mirror = (s, k, g, u, _) => { };
         r4.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(1234, 8181, "지킴이", 0, 1001));
 
         var cacheG = new RosterCache(cachePath, _ => { });
         var r5 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheG);
         var r5Lines = new List<string>();
-        r5.Mirror = (s, k, g, u) => r5Lines.Add(Palette.Strip(s).Trim());
+        r5.Mirror = (s, k, g, u, _) => r5Lines.Add(Palette.Strip(s).Trim());
         r5.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 8181));
         bool r3ok = r5Lines.Exists(l => !l.Contains("?8181"));
 
@@ -442,7 +442,7 @@ class Program
         Console.WriteLine("=== 라운드를 모를 때 ===");
         var rtLines = new List<string>();
         var rt = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames);
-        rt.Mirror = (s, k, g, u) => rtLines.Add(Palette.Strip(s).Trim());
+        rt.Mirror = (s, k, g, u, _) => rtLines.Add(Palette.Strip(s).Trim());
         rt.OnFrame(new FrameHeader(Op.ThrowDice, 0, 0, 0), Frame.Cat(Frame.Fix32(1, 3), Frame.Fix64(3, 2)));
         bool t1 = rtLines.Exists(l => l.StartsWith("[R?]"));
         rt.OnFrame(new FrameHeader(Op.RoundStart, 0, 0, 0), Frame.Cat(Frame.Fix32(1, 4), Frame.Fix64(5, 700)));

@@ -18,7 +18,9 @@ internal sealed class BattleLogger
     private readonly bool _logPlayerIds;
     private readonly bool _logCards;
 
-    public Action<string, LineKind, long, int>? Mirror;
+    // 마지막 값은 주사위 줄이면 캐릭터 주사위 눈을 두 자리씩 담은 값("5+2" → 205, 모르면 0),
+    // PK 줄이면 반격 여부(1/0)다. 화면 신호 짝짓기용(docs/SIGNAL-GATING.md).
+    public Action<string, LineKind, long, int, int>? Mirror;
     public Action<LineKind, long, int>? MirrorAdvance;
     public Action<int, long>? MirrorNewPage;
     public Action? MirrorClear;
@@ -28,6 +30,7 @@ internal sealed class BattleLogger
     private long _group;
     private long _groupSeq;
     private int _units;
+    private int _detail;
     private bool _kindFromCause;
 
     // PK 피해를 PK 줄과 같은 그룹에 넣는다. 따로 두면 PK 연출이 끝난 뒤에야 피해가 보인다.
@@ -144,6 +147,7 @@ internal sealed class BattleLogger
         _group = ++_groupSeq;
         _kind = KindOf(cmdId);
         _units = 0;
+        _detail = 0;
         _kindFromCause = cmdId == Op.UpdateHeroAttr;
 
         if (_finishPending && cmdId is not (Op.UpdateHeroAttr or Op.HeroSkillMoveEffect or Op.LandBuffs))
@@ -360,6 +364,13 @@ internal sealed class BattleLogger
         long steps = movePoint;
         if (steps == 0) foreach (long v in vals) steps += v;
         _units = (int)steps;
+        // 화면 오브젝트 이름에 눈이 실리는 것은 캐릭터 주사위에서만 확인했다. 여러 개면 눈마다 따로 실린다.
+        if (vals.Count is >= 1 and <= 4 && vals.All(v => v is > 0 and < 100) && _roster.IsCharacter(pid))
+        {
+            int code = 0;
+            for (int i = vals.Count - 1; i >= 0; i--) code = code * 100 + (int)vals[i];
+            _detail = code;
+        }
         if (steps != 0) sb.Append($" → {steps}칸");
         Emit(sb.ToString());
     }
@@ -540,6 +551,7 @@ internal sealed class BattleLogger
 
         var tags = new StringBuilder();
         if (fightBack != 0) tags.Append(" [반격]");
+        _detail = fightBack != 0 ? 1 : 0;
         if (isPursuit != 0) tags.Append(" [추격]");
         if (skillPlayer != 0) tags.Append($" [스킬 {_roster.Name(skillPlayer)}]");
 
@@ -1431,7 +1443,7 @@ internal sealed class BattleLogger
     private void EmitLine(string line, LineKind kind, long group, int units = 0)
     {
         string plain = Palette.Strip(line);
-        try { Mirror?.Invoke(line, kind, group, units); } catch { }
+        try { Mirror?.Invoke(line, kind, group, units, kind == _kind ? _detail : 0); } catch { }
         WriteFile(plain);
     }
 

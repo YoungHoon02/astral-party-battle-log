@@ -33,6 +33,7 @@ internal static class FramePump
             if (scene != _scene)
             {
                 _scene = scene;
+                ScreenProbe.OnScene();
                 OnSceneChanged?.Invoke(scene);
             }
         }
