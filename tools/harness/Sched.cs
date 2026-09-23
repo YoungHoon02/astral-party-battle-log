@@ -904,6 +904,43 @@ static class Sched
         Advance(60.1);
         Expect("G24 상한 공개는 화면 위치를 모르므로 앞 줄을 당기지 않는다 — 앞 줄은 모델대로 먼저", "card", "eff", "m");
 
+        // 라운드 끝 몬스터 주사위(눈 없음)가 다음 캐릭터 신호까지 라운드 페이지를 붙잡던 문제.
+        Setup(log, signals: true);
+        OverlaySchedule.Line("m", Dice, 1, 3, 0);
+        OverlaySchedule.Page(2, 2);
+        OverlaySchedule.Line("turn", LineKind.Turn, 3, 0, 0);
+        Advance(7.0);
+        Expect("RT1 라운드 팁 전에는 몬스터 주사위도 페이지도 기다린다");
+        Sig(ScreenSignal.RoundTip, true);
+        Advance(0.001);
+        Expect("RT1 라운드 팁이 켜지면 앞 대기 줄을 먼저 내고 페이지를 연다", "m", "<page 2>", "turn");
+
+        Setup(log, signals: true);
+        Sig(ScreenSignal.RoundTip, true);
+        Advance(0.1);
+        OverlaySchedule.Page(3, 1);
+        OverlaySchedule.Line("turn", LineKind.Turn, 2, 0, 0);
+        Advance(1.0);
+        Expect("RT2 페이지보다 먼저 켜진 공용 팁은 짝짓지 않는다");
+        Sig(ScreenSignal.RoundTip, true);
+        Advance(0.001);
+        Expect("RT2 뒤에 켜진 팁에 짝짓는다", "<page 3>", "turn");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("d", Dice, 1, 3, 4);
+        OverlaySchedule.Page(4, 2);
+        Advance(1.0);
+        Sig(ScreenSignal.DiceFace, false, 4);
+        Advance(0.001);
+        Expect("RT3 페이지는 앞 주사위 신호로 풀리지 않는다", "d");
+        Advance(59.1);
+        Expect("RT3 팁이 끝내 없으면 상한(60초)에 연다", "<page 4>");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Page(1, 1);
+        Advance(0.001);
+        Expect("RT4 1라운드 페이지는 신호를 기다리지 않는다", "<page 1>");
+
         RunLoggerTags(log);
 
         Setup(log, signals: false);

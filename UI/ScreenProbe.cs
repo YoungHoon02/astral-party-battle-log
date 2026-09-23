@@ -105,6 +105,8 @@ internal static class ScreenProbe
     private static (ScreenSignal, int)? SignalOf(string name)
     {
         if (name == "BattleShow(Clone)") return (ScreenSignal.Window, 0);
+        // 라운드 시작 팁. 3의 배수 라운드는 보상 팁을 대신 띄운다.
+        if (name is "Tips_Com_Common" or "Tips_Com_RoundReward") return (ScreenSignal.RoundTip, 0);
         if (name.StartsWith("BattleShow_Atk", StringComparison.Ordinal)) return (ScreenSignal.Hit, 0);
         Match dice = DiceFace.Match(name);
         return dice.Success ? (ScreenSignal.DiceFace, int.Parse(dice.Groups[1].Value)) : null;

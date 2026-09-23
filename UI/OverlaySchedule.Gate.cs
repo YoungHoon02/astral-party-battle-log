@@ -5,12 +5,12 @@ using AstralPartyBattleLog.Log;
 
 namespace AstralPartyBattleLog.UI;
 
-public enum ScreenSignal { DiceFace, Window, Hit }
+public enum ScreenSignal { DiceFace, Window, Hit, RoundTip }
 
 // 주사위·PK 결과 줄을 화면 신호로 공개한다. 규칙과 근거는 docs/SIGNAL-GATING.md.
 internal static partial class OverlaySchedule
 {
-    private enum Gate { None, Dice, Pk }
+    private enum Gate { None, Dice, Pk, Round }
     private enum Resolution { None, Signal, Late, Cap }
 
     private sealed class Entry
@@ -182,6 +182,12 @@ internal static partial class OverlaySchedule
     private static Entry NewEntry(Item item, long seq)
     {
         var e = new Entry { Item = item, Seq = seq };
+        // 1라운드는 넘어올 앞 라운드 줄이 없고, 페이지가 전투 씬 로드 전에 와서 오버레이 표시 판단에 쓰인다.
+        if (item.Signal == Signal.Page && item.Round >= 2)
+        {
+            e.Gate = Gate.Round;
+            return e;
+        }
         if (item.Signal != Signal.Line) return e;
         if (item.Kind == LineKind.Dice)
         {
@@ -267,6 +273,11 @@ internal static partial class OverlaySchedule
             Anchor(now);
             return;
         }
+        if (head.Gate == Gate.Round)
+        {
+            Anchor(head.ResolvedUs, seen: true);
+            return;
+        }
         if (head.Gate == Gate.Dice)
         {
             Anchor(head.ResolvedUs + (long)(DiceTailUs / head.Item.Speed), seen: true);
@@ -296,6 +307,9 @@ internal static partial class OverlaySchedule
                     _window = new Window();
                 }
                 else CloseWindow(s.AtUs);
+                break;
+            case ScreenSignal.RoundTip:
+                if (s.On) MatchRound(s.AtUs);
                 break;
             case ScreenSignal.Hit:
                 if (!s.On)
@@ -353,6 +367,24 @@ internal static partial class OverlaySchedule
         pending.Pips.Remove(pip);
         ResolveOlder(pending.Seq, atUs);
         if (pending.Pips.Count == 0) Resolve(pending, Resolution.Signal, atUs);
+    }
+
+    // 라운드 팁은 공용 안내 팁이라 다른 안내에도 켜진다. 대기 중인 라운드 페이지가 있을 때만 짝짓는다.
+    // 가장 늦게 받은 페이지에 짝짓고, 그 앞 대기 줄(신호 없는 몬스터 주사위 등)은 늦은 경로로 함께 푼다.
+    private static void MatchRound(long atUs)
+    {
+        Entry? page = null;
+        foreach (Entry e in Queue)
+            if (e.Gate == Gate.Round && e.Res == Resolution.None && e.Item.ReceivedUs < atUs) page = e;
+        if (page is null)
+        {
+            GateTrace("stray kind=round");
+            return;
+        }
+        // 게임은 앞 연출이 모두 끝난 뒤 라운드 팁을 띄운다. PK 창 꺼짐을 놓쳤어도 장벽을 붙잡을 이유가 없다.
+        _barrier = null;
+        ResolveOlder(page.Seq, atUs);
+        Resolve(page, Resolution.Signal, atUs);
     }
 
     private static void Strike(long atUs)
@@ -471,8 +503,9 @@ internal static partial class OverlaySchedule
             _forceThroughSeq = Math.Max(_forceThroughSeq, e.Seq);
             return;
         }
-        // 눈을 모르는 주사위는 올 신호가 없어 장부에 올릴 것도 없다.
-        if (e.Gate == Gate.Dice && e.Pips.Count == 0) return;
+        // 눈을 모르는 주사위는 올 신호가 없어 장부에 올릴 것도 없다. 라운드 팁은 뒤에 받은 페이지와만 짝지어져
+        // 늦게 와도 다른 줄을 먼저 풀지 않는다.
+        if (e.Gate == Gate.Dice && e.Pips.Count == 0 || e.Gate == Gate.Round) return;
         // 자기 신호 없이 공개한 줄은 모두 장부에 올린다. 그 신호가 늦게 오면 다음 줄 대신 여기서 소비된다.
         Unconsumed.Add(new Ledger
         {
