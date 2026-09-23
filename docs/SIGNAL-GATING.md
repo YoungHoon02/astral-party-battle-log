@@ -3,8 +3,9 @@
 > **상태:** `Overlay.SyncWithAnimation`(기본 true)이 켜져 있으면 이 규칙으로 동작한다. 측정 4 여섯째~여덟째
 > 판에서 캐릭터 주사위 65건과 PK 38건 중 화면보다 먼저 뜬 것은 0건이다. 반격은 실게임 표본이 없어 기록 재생과
 > 하네스로만 확인했고, 배속은 확인하지 않았다.
-> 근거는 [OVERLAY-TIMING.md](OVERLAY-TIMING.md) 측정 4(여덟 판)이다. 코드는 `UI/OverlaySchedule.Gate.cs`(공개 규칙),
-> `UI/ScreenProbe.cs`(신호 수집).
+> 근거는 [OVERLAY-TIMING.md](OVERLAY-TIMING.md) 측정 4(여덟 판)이다. 코드는 `UI/OverlaySchedule.Gate.cs`(주사위·PK
+> 공개 규칙), `UI/OverlaySchedule.Turns.cs`(라운드 페이지·차례 줄), `UI/ScreenProbe.cs`(신호 수집),
+> `UI/ScreenRecorder.cs`(후보 수집 진단).
 
 ## 왜 필요한가
 
@@ -222,9 +223,11 @@
 
 ## 5. 구현 구조
 
-- **신호 수집(`UI/ScreenProbe.cs`):** 오버레이와 `SyncWithAnimation`이 켜져 있을 때만
+- **신호 수집(`UI/ScreenProbe.cs`):** 오버레이와 `SyncWithAnimation`(또는 `Diagnostics.ScreenProbe`)이 켜져 있을 때만
   `GameObject.SetActive(bool)` Postfix를 설치한다. 오브젝트 이름을 포인터별로 한 번 분류해 `Dice_<캐릭터>_<눈>`, `BattleShow(Clone)`,
-  `BattleShow_Atk*`의 상태 전환만 `OverlaySchedule.Screen(kind, pip, on, 인스턴스)`으로 넘긴다. 둘 다 메인
+  `BattleShow_Atk*`, `Tips_Com_Common`·`Tips_Com_RoundReward`(라운드 팁), `Tips_Com_Top`(차례 배너 후보)의 상태 전환만
+  `OverlaySchedule.Screen(kind, pip, on, 인스턴스)`으로 넘긴다. 이름이 FairyGUI 기본값 `GComponent`인 동안은
+  캐시하지 않는다(셋째 수집). `Diagnostics.ScreenProbe`를 켜면 `UI/ScreenRecorder.cs`가 모든 전환을 따로 기록한다. 둘 다 메인
   스레드라 잠금이 필요 없다. `Pump`에서 `Incoming`을 먼저 비운 뒤 신호를 처리한다. PK 시작이 결과 수신보다
   먼저 오는 경우(전제 5)는 창을 열어 두고, 이벤트 시점에 짝짓는다. 기록 줄은 남기지 않는다.
 - **캐릭터 여부:** `BattleLogger`는 명단의 참가자가 굴린 주사위만 눈을 담아 넘긴다. 몬스터 주사위는 눈 0으로

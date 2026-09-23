@@ -174,6 +174,7 @@ PvP에서는 작은 정보 우위가 될 수 있으므로 사용 전에 이 점�
 | `Overlay.SyncWithAnimation` | true | 오버레이 줄을 게임 연출에 맞춰 표시합니다. 주사위·PK 결과는 화면의 주사위 눈·타격에, 나머지는 연출 길이 추정에 맞춥니다. 끄면 받는 즉시 표시합니다. 파일 로그는 그대로입니다 |
 | `Overlay.SyncMaxLagMs` | 60000 | 화면 재생 시작 시각의 수신 대비 최대 지연(밀리초) |
 | `Diagnostics.TraceTiming` | false | 표시 시점 진단 기록. 켜면 F10으로 화면에서 본 시각을 남깁니다 |
+| `Diagnostics.ScreenProbe` | false | 화면 오브젝트가 켜지고 꺼지는 기록. 개발용이며 게임이 무거워질 수 있습니다 |
 | `Output.WriteFile` | true | `battle-log.txt`에도 남기기 |
 | `Output.LogCards` | true | 공개된 카드 기록 |
 | `Names.Rebuild` | false | 이름표를 다시 만듭니다 (게임 업데이트 후) |

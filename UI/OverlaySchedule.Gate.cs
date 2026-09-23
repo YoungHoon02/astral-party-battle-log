@@ -64,11 +64,6 @@ internal static partial class OverlaySchedule
     private const long GateCapUs = 60_000_000;
     // 주사위 연출 2.70초 − 관측 최소 굴림 1.14초. 결과가 보인 뒤 이동이 끝나기까지.
     private const long DiceTailUs = 1_560_000;
-    // 차례 배너는 게임이 2초 띄운다. 같은 이름의 다른 팁은 배너와 함께 켜져 1.90~1.95초 떠 있다가 꺼져서
-    // 오차를 좁게 둔다(셋째 수집: 배너 1.991~2.010초).
-    private const long BannerUs = 2_000_000;
-    private const long BannerToleranceUs = 35_000;
-    private const int BannerVotes = 2;
 
     private static bool _gating;
     private static long _anchorUs = long.MinValue;
@@ -81,12 +76,6 @@ internal static partial class OverlaySchedule
     private static Window? _window;
     private static Window? _barrier;
     private static long _barrierCapUs;
-
-    // 위쪽 팁 오브젝트 두 개(차례 배너·생각 중 팁)는 이름이 같다. 2초 떠 있다 꺼진 쪽을 배너로 학습한다.
-    private static readonly Dictionary<IntPtr, long> TopOnUs = new();
-    private static readonly Dictionary<IntPtr, int> TopVotes = new();
-    private static readonly Dictionary<IntPtr, int> TopOnCount = new();
-    private static IntPtr _banner;
 
     public static bool UsesScreenSignals => _gating;
 
@@ -125,15 +114,6 @@ internal static partial class OverlaySchedule
         _barrier = null;
         _anchorUs = long.MinValue;
         TopOnCount.Clear();
-    }
-
-    // 오브젝트 포인터는 씬이 바뀌면 재사용될 수 있다. 판 세대가 아니라 씬에 묶는다.
-    public static void ForgetBanner()
-    {
-        TopOnUs.Clear();
-        TopVotes.Clear();
-        TopOnCount.Clear();
-        _banner = IntPtr.Zero;
     }
 
     private static void PumpGated(long now, Action<string> line, Action<int> page, Action clear)
@@ -212,14 +192,7 @@ internal static partial class OverlaySchedule
         if (item.Signal != Signal.Line) return e;
         if (item.Kind == LineKind.Turn && item.Detail == 0)
         {
-            if (_banner != IntPtr.Zero)
-            {
-                e.Gate = Gate.Turn;
-                return e;
-            }
-            // 학습 전에는 기다릴 신호가 없어 추정으로 내지만, 화면이 밀려 있으면 그 배너는 학습 뒤에 뜬다.
-            // 장부에 올려 두지 않으면 그 배너가 뒤 차례 줄에 짝지어져 앞 결과를 먼저 푼다(넷째 수집 21:35:27).
-            Unconsumed.Add(new Ledger { Gate = Gate.Turn, Seq = seq, ReceivedUs = item.ReceivedUs });
+            e.Gate = TurnGate(item, seq);
             return e;
         }
         if (item.Kind == LineKind.Dice)
@@ -403,82 +376,6 @@ internal static partial class OverlaySchedule
         pending.Pips.Remove(pip);
         ResolveOlder(pending.Seq, atUs);
         if (pending.Pips.Count == 0) Resolve(pending, Resolution.Signal, atUs);
-    }
-
-    // 라운드 팁은 공용 안내 팁이라 다른 안내에도 켜진다. 대기 중인 라운드 페이지가 있을 때만 짝짓는다.
-    // 가장 늦게 받은 페이지에 짝짓고, 그 앞 대기 줄(신호 없는 몬스터 주사위 등)은 늦은 경로로 함께 푼다.
-    private static void MatchRound(long atUs)
-    {
-        Entry? page = null;
-        foreach (Entry e in Queue)
-            if (e.Gate == Gate.Round && e.Res == Resolution.None && e.Item.ReceivedUs < atUs) page = e;
-        if (page is null)
-        {
-            GateTrace("stray kind=round");
-            return;
-        }
-        // 게임은 앞 연출이 모두 끝난 뒤 라운드 팁을 띄운다. PK 창 꺼짐을 놓쳤어도 장벽을 붙잡을 이유가 없다.
-        _barrier = null;
-        ResolveOlder(page.Seq, atUs);
-        Resolve(page, Resolution.Signal, atUs);
-    }
-
-    private static void TopTip(PendingSignal s)
-    {
-        if (s.On)
-        {
-            TopOnUs[s.Instance] = s.AtUs;
-            if (s.Instance == _banner) MatchTurn(s.AtUs);
-            else if (_banner == IntPtr.Zero) TopOnCount[s.Instance] = TopOnCount.GetValueOrDefault(s.Instance) + 1;
-            return;
-        }
-        if (!TopOnUs.Remove(s.Instance, out long onUs) || _banner != IntPtr.Zero) return;
-        // 게임 대기가 배속을 따르는지 확인하지 못해 실시간·배속 보정 길이 둘 다 받는다.
-        long shown = s.AtUs - onUs;
-        float speed = Volatile.Read(ref _speed);
-        if (Math.Abs(shown - BannerUs) > BannerToleranceUs
-            && Math.Abs((long)(shown * speed) - BannerUs) > BannerToleranceUs) return;
-        int votes = TopVotes[s.Instance] = TopVotes.GetValueOrDefault(s.Instance) + 1;
-        if (votes < BannerVotes) return;
-        foreach (KeyValuePair<IntPtr, int> other in TopVotes)
-            if (other.Key != s.Instance && other.Value >= votes) return;
-        _banner = s.Instance;
-        // 학습 전에 이미 켜진 배너 수만큼 장부의 앞 차례 줄은 화면을 지났다.
-        int seen = TopOnCount.GetValueOrDefault(s.Instance);
-        for (int i = 0; i < Unconsumed.Count && seen > 0;)
-        {
-            if (Unconsumed[i].Gate != Gate.Turn) { i++; continue; }
-            Unconsumed.RemoveAt(i);
-            seen--;
-        }
-        GateTrace($"banner learned owed={Unconsumed.FindAll(l => l.Gate == Gate.Turn).Count}");
-    }
-
-    // 차례 시작 줄은 수신 순서대로 배너 하나씩 대응한다. 앞 대기 줄(이동만 한 몬스터 주사위 등)은 늦은 경로로 푼다.
-    private static void MatchTurn(long atUs)
-    {
-        Entry? turn = null;
-        foreach (Entry e in Queue)
-            if (e.Gate == Gate.Turn && e.Res == Resolution.None)
-            {
-                if (e.Item.ReceivedUs < atUs) turn = e;
-                break;
-            }
-        Ledger? owed = Unconsumed.Find(l => l.Gate == Gate.Turn && l.ReceivedUs < atUs);
-        if (owed is not null && (turn is null || owed.Seq < turn.Seq))
-        {
-            Unconsumed.Remove(owed);
-            GateTrace("consume kind=turn");
-            return;
-        }
-        if (turn is null)
-        {
-            GateTrace("stray kind=turn");
-            return;
-        }
-        _barrier = null;
-        ResolveOlder(turn.Seq, atUs);
-        Resolve(turn, Resolution.Signal, atUs);
     }
 
     private static void Strike(long atUs)

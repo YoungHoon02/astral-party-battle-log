@@ -8,46 +8,35 @@ using UnityEngine;
 
 namespace AstralPartyBattleLog.UI;
 
-// GameObject.SetActive에서 주사위 눈·PK 창·타격 오브젝트의 전환을 골라 OverlaySchedule로 넘긴다.
-// 어떤 오브젝트를 왜 쓰는지는 docs/SIGNAL-GATING.md.
+// GameObject.SetActive에서 화면 신호 오브젝트(주사위 눈·PK 창·타격·라운드 팁·위쪽 팁)의 전환을 골라
+// OverlaySchedule로 넘긴다. 어떤 오브젝트를 왜 쓰는지는 docs/SIGNAL-GATING.md.
 internal static class ScreenProbe
 {
     // FairyGUI 패널이 한 프레임에 수백 개를 켜고 끌 때 이름 조회가 프레임을 끊지 않게 한다.
     // 조회하지 못한 포인터는 캐시하지 않으므로 다음 호출에서 다시 본다.
     private const int MaxNewNamesPerFrame = 1000;
     private const int MaxFailures = 20;
-    private const int MaxPathsPerFrame = 400;
-    private const int MaxLinesPerFrame = 80;
-    private const int MaxDepth = 12;
-    private const string OwnRoot = "AstralPartyBattleLogOverlay";
-    private const string PlayerCameraSuffix = "_VirtualCamera";
+    // FairyGUI가 오브젝트를 만들 때 붙이는 이름. 곧 패키지 이름으로 바뀐다(GComponent.cs 308·1292행).
+    private const string UnnamedComponent = "GComponent";
 
     private static readonly Regex DiceFace = new(@"^Dice_\d+_(\d+)", RegexOptions.Compiled);
-    private static readonly Regex LongDigits = new(@"\d{6,}", RegexOptions.Compiled);
 
     private static ManualLogSource? _log;
     private static Action<ScreenSignal, int, bool, IntPtr>? _signal;
     private static Action? _onDisabled;
     private static int _failures;
-    private static bool _discover;
 
     private static readonly Dictionary<IntPtr, bool> Active = new();
     private static readonly Dictionary<IntPtr, (ScreenSignal Sig, int Pip)?> Tags = new();
 
     private static int _frame = -1;
     private static int _namesThisFrame;
-    private static int _pathsThisFrame;
-    private static int _linesThisFrame;
-    private static long _budgetPath, _budgetLine;
-
 
     // 설치에 실패하면 false. 설치 뒤 오류가 반복돼 스스로 꺼질 때는 onDisabled를 부른다.
-    // discover는 신호 후보를 찾는 진단 기록이다(docs/SIGNAL-GATING.md "라운드 전환 신호 후보 수집").
     public static bool Init(ManualLogSource log, Harmony harmony,
-                            Action<ScreenSignal, int, bool, IntPtr>? signal, Action? onDisabled, bool discover)
+                            Action<ScreenSignal, int, bool, IntPtr>? signal, Action? onDisabled, bool record)
     {
         _log = log;
-        _discover = discover;
         try
         {
             harmony.PatchAll(typeof(ProbeSetActivePatch));
@@ -59,7 +48,7 @@ internal static class ScreenProbe
         }
         _signal = signal;
         _onDisabled = onDisabled;
-        if (discover) log.LogInfo("[probe] recording every SetActive change");
+        if (record) ScreenRecorder.Init(log);
         return true;
     }
 
@@ -68,22 +57,22 @@ internal static class ScreenProbe
     {
         Active.Clear();
         Tags.Clear();
-        if (_discover)
-            Write($"scene name={Mask(scene)} budgetPath={_budgetPath} budgetLine={_budgetLine}");
+        ScreenRecorder.OnScene(scene);
     }
 
     public static void NoteActive(GameObject go, bool value)
     {
-        if (_signal is null && !_discover) return;
+        bool record = ScreenRecorder.Enabled;
+        if (_signal is null && !record) return;
         try
         {
             IntPtr key = go.Pointer;
             if (!TryClassify(key, go, out (ScreenSignal Sig, int Pip)? tag)) return;
-            if (tag is null && !_discover) return;
+            if (tag is null && !record) return;
             if (Active.TryGetValue(key, out bool last) && last == value) return;
             Active[key] = value;
             if (tag is { } t) _signal?.Invoke(t.Sig, t.Pip, value, key);
-            if (_discover) Record(go, value);
+            if (record) ScreenRecorder.Record(go, value);
         }
         catch (Exception e)
         {
@@ -94,91 +83,37 @@ internal static class ScreenProbe
     private static bool TryClassify(IntPtr key, GameObject go, out (ScreenSignal Sig, int Pip)? tag)
     {
         if (Tags.TryGetValue(key, out tag)) return true;
-        RollFrame();
+        int frame = Time.frameCount;
+        if (frame != _frame)
+        {
+            _frame = frame;
+            _namesThisFrame = 0;
+        }
         if (_namesThisFrame >= MaxNewNamesPerFrame) return false;
         _namesThisFrame++;
         string name = go.name;
         tag = SignalOf(name);
-        // FairyGUI는 오브젝트를 "GComponent"로 만든 뒤 패키지 이름으로 바꾼다. 바뀌기 전 이름을 캐시하면
-        // 라운드 팁·차례 배너가 영영 신호로 잡히지 않는다(docs/SIGNAL-GATING.md 셋째 수집).
-        if (tag is not null || name != "GComponent") Tags[key] = tag;
+        // 이름이 바뀌기 전에 "신호 아님"으로 캐시하면 라운드 팁·차례 배너를 끝내 못 잡는다.
+        if (tag is not null || name != UnnamedComponent) Tags[key] = tag;
         return true;
     }
 
     private static (ScreenSignal, int)? SignalOf(string name)
     {
         if (name == "BattleShow(Clone)") return (ScreenSignal.Window, 0);
-        // 라운드 시작 팁. 3의 배수 라운드는 보상 팁을 대신 띄운다.
+        // 3의 배수 라운드는 라운드 팁 대신 보상 팁을 띄운다.
         if (name is "Tips_Com_Common" or "Tips_Com_RoundReward") return (ScreenSignal.RoundTip, 0);
-        // 차례 배너와 생각 중 팁이 같은 이름이다. 둘을 가르는 것은 OverlaySchedule이 한다.
+        // 차례 배너와 다른 팁이 같은 이름이라 가르는 것은 OverlaySchedule이 한다.
         if (name == "Tips_Com_Top") return (ScreenSignal.TopTip, 0);
         if (name.StartsWith("BattleShow_Atk", StringComparison.Ordinal)) return (ScreenSignal.Hit, 0);
         Match dice = DiceFace.Match(name);
         return dice.Success ? (ScreenSignal.DiceFace, int.Parse(dice.Groups[1].Value)) : null;
     }
 
-    private static void Record(GameObject go, bool value)
-    {
-        RollFrame();
-        // FairyGUI는 숨긴 오브젝트를 부모에서 떼었다가 다시 붙인다. 처음 본 경로를 캐시하면 떼어진 상태의
-        // 이름("GComponent")만 남아 후보를 알아볼 수 없어서 매번 다시 잰다.
-        if (_pathsThisFrame >= MaxPathsPerFrame)
-        {
-            _budgetPath++;
-            return;
-        }
-        _pathsThisFrame++;
-        string? path = PathOf(go.transform);
-        if (path is null) return;
-        if (_linesThisFrame >= MaxLinesPerFrame)
-        {
-            _budgetLine++;
-            return;
-        }
-        _linesThisFrame++;
-        Write($"active={(value ? 1 : 0)} path={path}");
-    }
-
-    private static string? PathOf(Transform transform)
-    {
-        if (transform.root.name == OwnRoot) return null;
-        var parts = new List<string>();
-        Transform? t = transform;
-        for (int i = 0; t != null && i < MaxDepth; i++, t = t.parent) parts.Add(Mask(t.name));
-        parts.Reverse();
-        return (t != null ? ".../" : "") + string.Join('/', parts);
-    }
-
-    // 오브젝트 이름에 닉네임이 들어갈 수 있다. 플레이어별 카메라는 "<닉네임>_VirtualCamera"라 ASCII 닉네임도
-    // 새므로 따로 가리고, ASCII 밖의 글자가 섞인 이름과 긴 숫자를 가린다.
-    private static string Mask(string name)
-    {
-        if (name.EndsWith(PlayerCameraSuffix, StringComparison.Ordinal) && name.Length > PlayerCameraSuffix.Length)
-            return "~" + PlayerCameraSuffix;
-        Match dice = DiceFace.Match(name);
-        if (dice.Success) return "Dice_" + dice.Groups[1].Value;
-        foreach (char c in name)
-            if (c > '~') return $"~{name.Length}";
-        return LongDigits.Replace(name, "#");
-    }
-
-    private static void RollFrame()
-    {
-        int frame = Time.frameCount;
-        if (frame == _frame) return;
-        _frame = frame;
-        _namesThisFrame = 0;
-        _pathsThisFrame = 0;
-        _linesThisFrame = 0;
-    }
-
-    private static void Write(string text) =>
-        _log?.LogInfo($"[probe] {DateTime.Now:HH:mm:ss.fff} f={Time.frameCount} {text}");
-
     private static void Fail(Exception e)
     {
         if (++_failures < MaxFailures) return;
-        _discover = false;
+        ScreenRecorder.Disable();
         _signal = null;
         _log?.LogWarning($"[screen] disabled after {_failures} errors: {e.Message}");
         _onDisabled?.Invoke();

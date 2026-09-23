@@ -162,13 +162,15 @@ public class Plugin : BasePlugin
             _harmony.PatchAll(typeof(FramePump));
             Log.LogInfo("Socket patches applied. Waiting for battle traffic.");
             bool gating = OverlaySchedule.UsesScreenSignals;
-            if ((gating || screenProbe.Value)
-                && !ScreenProbe.Init(Log, _harmony, gating ? OverlaySchedule.Screen : null,
-                                     gating ? OverlaySchedule.FallBackToModel : null, screenProbe.Value)
-                && gating)
+            if (gating || screenProbe.Value)
             {
-                OverlaySchedule.FallBackToModel();
-                Log.LogWarning("Screen signal hook failed; overlay falls back to estimated timing.");
+                bool hooked = ScreenProbe.Init(Log, _harmony, gating ? OverlaySchedule.Screen : null,
+                                               gating ? OverlaySchedule.FallBackToModel : null, screenProbe.Value);
+                if (!hooked && gating)
+                {
+                    OverlaySchedule.FallBackToModel();
+                    Log.LogWarning("Screen signal hook failed; overlay falls back to estimated timing.");
+                }
             }
         }
         catch (Exception e)

@@ -221,7 +221,9 @@ idle은 모델이 자기 (틀린) 길이로 계산한 값이라 화면이 실제
 
 측정 중에 쓰던 `Overlay.ScreenSignals`(화면 신호 공개를 따로 켜던 실험 설정)와 `Diagnostics.ScreenProbe*`
 (오브젝트 전수 기록·경로 폴링·텍스트 후킹)는 제거했다. 기존 설정 파일에 남은 값은 파일에 그대로 남지만
-읽지 않는다. 남은 값이 있는 설정 파일, 그 값이 없는 설정 파일, 새 파일 모두에서 설정 로딩을 확인했다. 다시 후보를 찾아야 하면 커밋 `d10b55d`의 `UI/ScreenProbe.cs`·`Plugin.cs`를 되살린다.
+읽지 않는다. 남은 값이 있는 설정 파일, 그 값이 없는 설정 파일, 새 파일 모두에서 설정 로딩을 확인했다. 오브젝트 전수 기록은
+v0.3.1에서 `Diagnostics.ScreenProbe`(bool)로 다시 넣었다(`UI/ScreenRecorder.cs`, 절차는 SIGNAL-GATING.md "라운드 전환 신호
+후보 수집"). 경로 폴링·텍스트 후킹이 필요하면 커밋 `d10b55d`의 `UI/ScreenProbe.cs`·`Plugin.cs`를 참고한다.
 
 ## 측정 현황
 
