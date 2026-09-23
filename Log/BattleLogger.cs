@@ -18,10 +18,9 @@ internal sealed class BattleLogger
     private readonly bool _logPlayerIds;
     private readonly bool _logCards;
 
-    public Action<string, LineKind, long, int>? Mirror;
-    // 설정되면 Mirror 대신 쓴다. 마지막 값은 주사위 줄이면 캐릭터 주사위 눈을 두 자리씩 담은 값("5+2" → 205, 모르면 0),
+    // 마지막 값은 주사위 줄이면 캐릭터 주사위 눈을 두 자리씩 담은 값("5+2" → 205, 모르면 0),
     // PK 줄이면 반격 여부(1/0)다. 화면 신호 짝짓기용(docs/SIGNAL-GATING.md).
-    public Action<string, LineKind, long, int, int>? MirrorTagged;
+    public Action<string, LineKind, long, int, int>? Mirror;
     public Action<LineKind, long, int>? MirrorAdvance;
     public Action<int, long>? MirrorNewPage;
     public Action? MirrorClear;
@@ -1444,12 +1443,7 @@ internal sealed class BattleLogger
     private void EmitLine(string line, LineKind kind, long group, int units = 0)
     {
         string plain = Palette.Strip(line);
-        try
-        {
-            if (MirrorTagged is { } tagged) tagged(line, kind, group, units, kind == _kind ? _detail : 0);
-            else Mirror?.Invoke(line, kind, group, units);
-        }
-        catch { }
+        try { Mirror?.Invoke(line, kind, group, units, kind == _kind ? _detail : 0); } catch { }
         WriteFile(plain);
     }
 

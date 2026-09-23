@@ -75,12 +75,6 @@
       <Private>false</Private>
     </Reference>
 
-    <!-- 화면 신호 프로브 (Diagnostics.ScreenProbe) -->
-    <Reference Include="Unity.TextMeshPro">
-      <HintPath>$(BepInExDir)\interop\Unity.TextMeshPro.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-
     <!-- Input.GetKeyDown (토글 키) -->
     <Reference Include="UnityEngine.InputLegacyModule">
       <HintPath>$(BepInExDir)\interop\UnityEngine.InputLegacyModule.dll</HintPath>

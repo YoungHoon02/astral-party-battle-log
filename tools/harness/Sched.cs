@@ -294,14 +294,14 @@ static class Sched
         return _fail;
     }
 
-    // 실제 패킷 → BattleLogger → MirrorTagged → 게이트 → 화면 신호까지 한 경로로 확인한다.
+    // 실제 패킷 → BattleLogger → Mirror → 게이트 → 화면 신호까지 한 경로로 확인한다.
     static void RunLoggerTags(ManualLogSource log)
     {
         const long Char = 100, Monster = 200;
         var names = NameTable.Load(Path.Combine(Path.GetTempPath(), "apbl-harness-no-names.tsv"), _ => { });
         var lg = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
         var tags = new List<string>();
-        lg.MirrorTagged = (s, k, g, u, d) =>
+        lg.Mirror = (s, k, g, u, d) =>
         {
             if (k is LineKind.Dice or LineKind.Attack) tags.Add($"{k}:{d}");
             OverlaySchedule.Line(k.ToString(), k, g, u, d);
@@ -783,6 +783,25 @@ static class Sched
         OverlaySchedule.Line("pk", Pk, 2, 0, 0);
         HitWindow(1);
         Expect("W6 약한 창은 반격 결과를 정산하지 않는다 — 원래 PK 후보에서도 빠진다", "ctr", "pk");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("d", Dice, 1, 3, 3);
+        OverlaySchedule.Line("card", LineKind.Card, 2, 0, 0);
+        Advance(1.0);
+        Expect("G21 신호 대기 중");
+        OverlaySchedule.DisableScreenSignals();
+        Advance(0.55);
+        Expect("G21 신호가 끊기면 대기 줄을 모델 예약으로 넘긴다 (t=1.55)");
+        Advance(0.1);
+        Expect("G21 쉬는 화면 주사위 1.60초", "d");
+        Advance(1.1);
+        Expect("G21 뒤 줄은 주사위 연출 뒤 (t=2.75)", "card");
+        Sig(ScreenSignal.DiceFace, false, 3);
+        OverlaySchedule.Line("d2", Dice, 3, 3, 3);
+        Advance(2.7);
+        Expect("G21 이후 신호는 무시하고 카드 연출 뒤까지 기다린다 (t=5.45)");
+        Advance(0.2);
+        Expect("G21 모델 예약 (t=5.65)", "d2");
 
         RunLoggerTags(log);
 

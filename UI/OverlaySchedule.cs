@@ -122,7 +122,6 @@ internal static partial class OverlaySchedule
     public static void Line(string text, LineKind kind, long group, int units) =>
         Push(Signal.Line, kind, group, units, text, 0);
 
-    // detail: 주사위 줄이면 캐릭터 주사위 눈을 두 자리씩 담은 값("5+2" → 205, 모르면 0), PK 줄이면 반격 여부(1/0).
     public static void Line(string text, LineKind kind, long group, int units, int detail) =>
         Push(Signal.Line, kind, group, units, text, 0, detail);
 
