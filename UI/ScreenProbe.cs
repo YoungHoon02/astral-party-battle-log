@@ -16,7 +16,7 @@ internal static class ScreenProbe
     // 조회하지 못한 포인터는 캐시하지 않으므로 다음 호출에서 다시 본다.
     private const int MaxNewNamesPerFrame = 1000;
     private const int MaxFailures = 20;
-    // FairyGUI가 오브젝트를 만들 때 붙이는 이름. 곧 패키지 이름으로 바뀐다(GComponent.cs 308·1292행).
+    // FairyGUI가 오브젝트를 만들 때 붙였다가 곧 패키지 이름으로 바꾸는 이름.
     private const string UnnamedComponent = "GComponent";
 
     private static readonly Regex DiceFace = new(@"^Dice_\d+_(\d+)", RegexOptions.Compiled);

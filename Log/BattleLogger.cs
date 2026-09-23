@@ -293,8 +293,7 @@ internal sealed class BattleLogger
             if (field == 1) round = v;
         }
         _round = (int)round;
-        // 필드 5(PlayerId)는 받는 사람 자신이다(BattleLogic.OnRoundStartS2C가 자기 id와 비교한다). 차례 주인으로 쓰면
-        // 첫 차례 전의 주인 없는 효과가 모두 본인 것으로 찍힌다.
+        // 필드 5(PlayerId)는 첫 행동자가 아니라 받는 사람 자신이다(docs/protocol-fields.md).
         _turnOwner = 0;
         _saidSkillUse = 0;
         _cardSubmits.Clear();

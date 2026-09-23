@@ -94,7 +94,6 @@ internal static partial class OverlaySchedule
         GateTrace($"banner learned owed={Unconsumed.FindAll(l => l.Gate == Gate.Turn).Count}");
     }
 
-    // 차례 시작 줄은 수신 순서대로 배너 하나씩 대응한다. 장부 항목이 먼저면 그 배너를 소비만 한다.
     private static void MatchTurn(long atUs)
     {
         Entry? turn = null;

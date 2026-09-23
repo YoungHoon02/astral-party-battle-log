@@ -495,7 +495,8 @@ internal static partial class OverlaySchedule
             return;
         }
         // 눈을 모르는 주사위는 올 신호가 없어 장부에 올릴 것도 없다. 라운드 팁은 뒤에 받은 페이지와만 짝지어져
-        // 늦게 와도 다른 줄을 먼저 풀지 않는다.
+        // 늦게 와도 다른 줄을 먼저 풀지 않는다. 차례 줄이 늦은 경로로 풀렸다면 그 배너는 이미 놓친 것이라,
+        // 장부에 올리면 뒤 차례 줄이 모두 배너 하나씩 밀린다.
         if (e.Gate == Gate.Dice && e.Pips.Count == 0 || e.Gate is Gate.Round or Gate.Turn) return;
         // 자기 신호 없이 공개한 줄은 모두 장부에 올린다. 그 신호가 늦게 오면 다음 줄 대신 여기서 소비된다.
         Unconsumed.Add(new Ledger

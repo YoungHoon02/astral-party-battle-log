@@ -43,7 +43,6 @@ def parse(path):
 
 
 def score(rounds, times):
-    # 구간 i = [round_i, round_{i+1}). 구간마다 첫 켜짐 지연과 구간 안 켜짐 수를 센다.
     bounds = rounds + [float("inf")]
     delays, exact = [], 0
     for i, start in enumerate(rounds):
