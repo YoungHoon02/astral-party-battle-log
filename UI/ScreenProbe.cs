@@ -16,7 +16,7 @@ internal static class ScreenProbe
     // 조회하지 못한 포인터는 캐시하지 않으므로 다음 호출에서 다시 본다.
     private const int MaxNewNamesPerFrame = 1000;
     private const int MaxFailures = 20;
-    private const int MaxNewPathsPerFrame = 40;
+    private const int MaxPathsPerFrame = 400;
     private const int MaxLinesPerFrame = 80;
     private const int MaxDepth = 12;
     private const string OwnRoot = "AstralPartyBattleLogOverlay";
@@ -40,7 +40,6 @@ internal static class ScreenProbe
     private static int _linesThisFrame;
     private static long _budgetPath, _budgetLine;
 
-    private static readonly Dictionary<IntPtr, string?> Paths = new();
 
     // 설치에 실패하면 false. 설치 뒤 오류가 반복돼 스스로 꺼질 때는 onDisabled를 부른다.
     // discover는 신호 후보를 찾는 진단 기록이다(docs/SIGNAL-GATING.md "라운드 전환 신호 후보 수집").
@@ -69,7 +68,6 @@ internal static class ScreenProbe
     {
         Active.Clear();
         Tags.Clear();
-        Paths.Clear();
         if (_discover)
             Write($"scene name={Mask(scene)} budgetPath={_budgetPath} budgetLine={_budgetLine}");
     }
@@ -85,7 +83,7 @@ internal static class ScreenProbe
             if (Active.TryGetValue(key, out bool last) && last == value) return;
             Active[key] = value;
             if (tag is { } t) _signal?.Invoke(t.Sig, t.Pip, value, key);
-            if (_discover) Record(key, go, value);
+            if (_discover) Record(go, value);
         }
         catch (Exception e)
         {
@@ -112,20 +110,18 @@ internal static class ScreenProbe
         return dice.Success ? (ScreenSignal.DiceFace, int.Parse(dice.Groups[1].Value)) : null;
     }
 
-    private static void Record(IntPtr key, GameObject go, bool value)
+    private static void Record(GameObject go, bool value)
     {
         RollFrame();
-        if (!Paths.TryGetValue(key, out string? path))
+        // FairyGUI는 숨긴 오브젝트를 부모에서 떼었다가 다시 붙인다. 처음 본 경로를 캐시하면 떼어진 상태의
+        // 이름("GComponent")만 남아 후보를 알아볼 수 없어서 매번 다시 잰다.
+        if (_pathsThisFrame >= MaxPathsPerFrame)
         {
-            if (_pathsThisFrame >= MaxNewPathsPerFrame)
-            {
-                _budgetPath++;
-                return;
-            }
-            _pathsThisFrame++;
-            path = PathOf(go.transform);
-            Paths[key] = path;
+            _budgetPath++;
+            return;
         }
+        _pathsThisFrame++;
+        string? path = PathOf(go.transform);
         if (path is null) return;
         if (_linesThisFrame >= MaxLinesPerFrame)
         {
