@@ -332,8 +332,8 @@ static class Sched
         Dice(Char, 3, 2);
         Battle(Char, Monster, counter: false);
         Battle(Monster, Char, counter: true);
-        bool ok = string.Join(",", tags) == "Dice:6,Dice:0,Dice:0,Attack:0,Attack:1";
-        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} L1 로거가 캐릭터 주사위 눈·몬스터/두 개 주사위 0·반격 여부를 넘긴다: "
+        bool ok = string.Join(",", tags) == "Dice:6,Dice:0,Dice:203,Attack:0,Attack:1";
+        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} L1 로거가 캐릭터 주사위 눈(두 개는 3+2 → 203)·몬스터 0·반격 여부를 넘긴다: "
                           + $"[{string.Join(", ", tags)}]");
         if (!ok) _fail++;
 
@@ -342,11 +342,17 @@ static class Sched
         Sig(ScreenSignal.DiceFace, false, 6);
         Advance(0.001);
         Expect("L2 캐릭터 주사위 눈 신호로 공개", "Dice");
+        Sig(ScreenSignal.DiceFace, false, 3);
+        Advance(0.001);
+        Expect("L2 두 개 주사위는 눈 하나만 꺼져서는 공개하지 않고, 앞의 몬스터 주사위만 늦은 경로로", "Dice");
+        Sig(ScreenSignal.DiceFace, false, 2);
+        Advance(0.001);
+        Expect("L2 두 눈이 모두 꺼지면 공개", "Dice");
         Sig(ScreenSignal.Window, true);
         Advance(3.0);
         Sig(ScreenSignal.Hit, true, instance: 1);
         Advance(0.001);
-        Expect("L2 PK 타격에 공개, 앞의 몬스터·두 개 주사위는 늦은 경로로", "Dice", "Dice", "Attack");
+        Expect("L2 PK 타격에 공개", "Attack");
         Sig(ScreenSignal.Hit, false, instance: 1);
         Advance(7.0);
         Sig(ScreenSignal.Hit, true, instance: 2);
@@ -620,6 +626,118 @@ static class Sched
         Sig(ScreenSignal.Hit, true, instance: 2);
         Advance(0.001);
         Expect("G17 타격 꺼짐을 놓쳐도 다음 창의 첫 타격은 스트라이크", "pk2");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("single", Dice, 1, 5, 5);
+        OverlaySchedule.Line("double", Dice, 2, 7, 205);
+        Advance(1.0);
+        Sig(ScreenSignal.DiceFace, false, 5);
+        Advance(0.001);
+        Expect("G18 같은 눈은 수신 순서상 앞의 한 개짜리 주사위가 먼저", "single");
+        Advance(1.0);
+        Sig(ScreenSignal.DiceFace, false, 5);
+        Sig(ScreenSignal.DiceFace, false, 2);
+        Advance(0.001);
+        Expect("G18 두 개 주사위(5+2)는 두 눈이 모두 꺼지면 공개", "double");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("double", Dice, 1, 7, 205);
+        OverlaySchedule.Line("after", Dice, 2, 4, 4);
+        Advance(0.5);
+        Sig(ScreenSignal.DiceFace, false, 5);
+        Advance(0.001);
+        Expect("G18 눈 하나만 꺼진 두 개 주사위는 기다린다");
+        Sig(ScreenSignal.DiceFace, false, 4);
+        Advance(0.001);
+        Expect("G18 뒤 주사위 신호가 오면 늦은 경로로 함께", "double", "after");
+        OverlaySchedule.Line("next", Dice, 3, 2, 2);
+        Advance(0.5);
+        Sig(ScreenSignal.DiceFace, false, 2);
+        Advance(0.001);
+        Expect("G18 못 받은 눈(2)은 장부에 남아 늦은 신호를 소비한다");
+        Sig(ScreenSignal.DiceFace, false, 2);
+        Advance(0.001);
+        Expect("G18 제 신호", "next");
+
+        // 측정 4 일곱째 판: 타격 없는 캐릭터의 PK가 장부에 남아 뒤 PK 타격을 계속 소비했다.
+        void WeakWindow()
+        {
+            Sig(ScreenSignal.Window, true);
+            Advance(3.0);
+            Sig(ScreenSignal.Window, false);
+            Advance(0.001);
+        }
+        void HitWindow(int instance)
+        {
+            Sig(ScreenSignal.Window, true);
+            Advance(3.0);
+            Sig(ScreenSignal.Hit, true, instance: instance);
+            Advance(0.001);
+        }
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("p1", Pk, 1, 0, 0);
+        OverlaySchedule.Line("p2", Pk, 2, 0, 0);
+        WeakWindow();
+        WeakWindow();
+        Expect("W1 타격 없는 창 2개는 결과를 공개하지 않는다");
+        OverlaySchedule.Line("d", Dice, 3, 3, 3);
+        Advance(0.5);
+        Sig(ScreenSignal.DiceFace, false, 3);
+        Advance(0.001);
+        Expect("W1 뒤 주사위 신호에 늦게 공개", "p1", "p2", "d");
+        OverlaySchedule.Line("p3", Pk, 4, 0, 0);
+        HitWindow(1);
+        Expect("W1 약한 창에 정산된 결과는 장부가 없어 다음 PK 타격이 바로 공개", "p3");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("p1", Pk, 1, 0, 0);
+        OverlaySchedule.Line("p2", Pk, 2, 0, 0);
+        WeakWindow();
+        HitWindow(1);
+        Expect("W2 타격은 약한 창에 정산된 결과를 건너뛰어 다음 PK에 (앞 결과는 늦은 경로)", "p1", "p2");
+        Sig(ScreenSignal.Window, false);
+        OverlaySchedule.Line("p3", Pk, 3, 0, 0);
+        HitWindow(2);
+        Expect("W2 장부 소비 없이 다음 PK", "p3");
+
+        Setup(log, signals: true);
+        WeakWindow();
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        HitWindow(1);
+        Expect("W3 결과 없는 약한 창은 뒤에 받은 결과를 미리 정산하지 않는다", "pk");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        Advance(60.1);
+        Expect("W4 상한 공개(장부 등록)", "pk");
+        WeakWindow();
+        OverlaySchedule.Line("pk2", Pk, 2, 0, 0);
+        HitWindow(1);
+        Expect("W4 약한 창이 장부 항목을 정산하면 다음 타격은 소비되지 않는다", "pk2");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        OverlaySchedule.Line("ctr", Pk, 2, 0, 1);
+        HitWindow(1);
+        Expect("W5 원래 PK", "pk");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Advance(7.0);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("W5 반격은 같은 창의 다음 타격", "ctr");
+        Sig(ScreenSignal.Hit, false, instance: 2);
+        Sig(ScreenSignal.Window, false);
+        OverlaySchedule.Line("pk3", Pk, 3, 0, 0);
+        HitWindow(3);
+        Expect("W5 반격이 창을 따로 소비하지 않아 다음 PK는 제 타격에", "pk3");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("ctr", Pk, 1, 0, 1);
+        WeakWindow();
+        OverlaySchedule.Line("pk", Pk, 2, 0, 0);
+        HitWindow(1);
+        Expect("W6 약한 창은 반격 결과를 정산하지 않는다 — 원래 PK 후보에서도 빠진다", "ctr", "pk");
 
         RunLoggerTags(log);
 

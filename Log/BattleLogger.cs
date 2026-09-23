@@ -19,7 +19,7 @@ internal sealed class BattleLogger
     private readonly bool _logCards;
 
     public Action<string, LineKind, long, int>? Mirror;
-    // 설정되면 Mirror 대신 쓴다. 마지막 값은 주사위 줄이면 캐릭터 주사위 한 개의 눈(아니면 0),
+    // 설정되면 Mirror 대신 쓴다. 마지막 값은 주사위 줄이면 캐릭터 주사위 눈을 두 자리씩 담은 값("5+2" → 205, 모르면 0),
     // PK 줄이면 반격 여부(1/0)다. 화면 신호 짝짓기용(docs/SIGNAL-GATING.md).
     public Action<string, LineKind, long, int, int>? MirrorTagged;
     public Action<LineKind, long, int>? MirrorAdvance;
@@ -365,8 +365,13 @@ internal sealed class BattleLogger
         long steps = movePoint;
         if (steps == 0) foreach (long v in vals) steps += v;
         _units = (int)steps;
-        // 화면 오브젝트 이름에 눈이 실리는 것은 캐릭터 주사위 한 개에서만 확인했다.
-        if (vals.Count == 1 && vals[0] > 0 && _roster.IsCharacter(pid)) _detail = (int)vals[0];
+        // 화면 오브젝트 이름에 눈이 실리는 것은 캐릭터 주사위에서만 확인했다. 여러 개면 눈마다 따로 실린다.
+        if (vals.Count is >= 1 and <= 4 && vals.All(v => v is > 0 and < 100) && _roster.IsCharacter(pid))
+        {
+            int code = 0;
+            for (int i = vals.Count - 1; i >= 0; i--) code = code * 100 + (int)vals[i];
+            _detail = code;
+        }
         if (steps != 0) sb.Append($" → {steps}칸");
         Emit(sb.ToString());
     }

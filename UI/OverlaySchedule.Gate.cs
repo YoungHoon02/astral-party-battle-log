@@ -18,8 +18,10 @@ internal static partial class OverlaySchedule
         public Item Item;
         public long Seq;
         public Gate Gate;
-        public int Pip;
+        public List<int> Pips = new();
         public bool Counter;
+        // 타격 없이 닫힌 자기 창에 정산됐다. 타격 후보에서 빠지고, 신호 없이 공개돼도 장부에 오르지 않는다.
+        public bool WeakSettled;
         public bool Scheduled;
         public long DueUs, FloorUs;
         public Resolution Res;
@@ -30,7 +32,7 @@ internal static partial class OverlaySchedule
     private sealed class Ledger
     {
         public Gate Gate;
-        public int Pip;
+        public List<int> Pips = new();
         public bool Counter;
         public long Seq;
         public long ReceivedUs;
@@ -166,7 +168,7 @@ internal static partial class OverlaySchedule
         if (item.Kind == LineKind.Dice)
         {
             e.Gate = Gate.Dice;
-            e.Pip = item.Detail;
+            e.Pips = DecodePips(item.Detail);
         }
         else if (item.Kind == LineKind.Attack)
         {
@@ -259,26 +261,36 @@ internal static partial class OverlaySchedule
     private static void CloseWindow(long atUs)
     {
         if (_window is null) return;
-        if (_window.Strikes == 0) GateTrace("weak");
+        if (_window.Strikes == 0) SettleWeak(atUs);
         _window.Ended = true;
         _window.EndUs = atUs;
         _window = null;
     }
 
+    // 로거가 주사위 여러 개의 눈을 두 자리씩 담아 넘긴다("5+2" → 205). 0이면 눈을 모른다(몬스터 등).
+    private static List<int> DecodePips(int detail)
+    {
+        var pips = new List<int>();
+        for (; detail > 0; detail /= 100) pips.Add(detail % 100);
+        return pips;
+    }
+
+    // 주사위 여러 개는 눈마다 오브젝트가 따로 꺼진다. 모든 눈이 꺼져야 공개하고, 첫 눈에서 앞 대기 줄을 푼다.
     private static void MatchDice(int pip, long atUs)
     {
         Entry? pending = null;
         foreach (Entry e in Queue)
-            if (e.Gate == Gate.Dice && e.Res == Resolution.None && e.Pip == pip && e.Item.ReceivedUs < atUs)
+            if (e.Gate == Gate.Dice && e.Res == Resolution.None && e.Pips.Contains(pip) && e.Item.ReceivedUs < atUs)
             {
                 pending = e;
                 break;
             }
-        Ledger? owed = Unconsumed.Find(l => l.Gate == Gate.Dice && l.Pip == pip && l.ReceivedUs < atUs);
+        Ledger? owed = Unconsumed.Find(l => l.Gate == Gate.Dice && l.Pips.Contains(pip) && l.ReceivedUs < atUs);
 
         if (owed is not null && (pending is null || owed.Seq < pending.Seq))
         {
-            Unconsumed.Remove(owed);
+            owed.Pips.Remove(pip);
+            if (owed.Pips.Count == 0) Unconsumed.Remove(owed);
             GateTrace($"consume kind=dice pip={pip}");
             return;
         }
@@ -287,8 +299,9 @@ internal static partial class OverlaySchedule
             GateTrace($"stray kind=dice pip={pip}");
             return;
         }
-        Resolve(pending, Resolution.Signal, atUs);
+        pending.Pips.Remove(pip);
         ResolveOlder(pending.Seq, atUs);
+        if (pending.Pips.Count == 0) Resolve(pending, Resolution.Signal, atUs);
     }
 
     private static void Strike(long atUs)
@@ -303,7 +316,7 @@ internal static partial class OverlaySchedule
 
         if (w.Strikes == 1)
         {
-            (Entry? pending, Ledger? owed) = OldestPk(afterSeq: -1, atUs);
+            (Entry? pending, Ledger? owed) = OldestPk(afterSeq: -1, atUs, originalOnly: true);
             if (owed is not null && (pending is null || owed.Seq < pending.Seq))
             {
                 Unconsumed.Remove(owed);
@@ -324,7 +337,7 @@ internal static partial class OverlaySchedule
             GateTrace("extra-strike");
             return;
         }
-        (Entry? next, Ledger? nextOwed) = OldestPk(afterSeq: w.LastSeq, long.MaxValue);
+        (Entry? next, Ledger? nextOwed) = OldestPk(afterSeq: w.LastSeq, long.MaxValue, originalOnly: false);
         bool owedFirst = nextOwed is not null && (next is null || nextOwed.Seq < next.Seq);
         if (owedFirst && nextOwed!.Counter && nextOwed.ReceivedUs < atUs)
         {
@@ -343,12 +356,33 @@ internal static partial class OverlaySchedule
         GateTrace("extra-strike");
     }
 
-    private static (Entry?, Ledger?) OldestPk(long afterSeq, long beforeUs)
+    // 창마다 원래 PK 하나가 대응한다(반격은 같은 창을 쓴다). 타격 없이 닫힌 창도 그 PK를 정산해야
+    // 타격 없는 캐릭터의 결과가 장부에 남아 뒤 PK의 타격을 대신 소비하는 연쇄가 생기지 않는다(측정 4 일곱째 판).
+    private static void SettleWeak(long atUs)
+    {
+        (Entry? pending, Ledger? owed) = OldestPk(afterSeq: -1, atUs, originalOnly: true);
+        if (owed is not null && (pending is null || owed.Seq < pending.Seq))
+        {
+            Unconsumed.Remove(owed);
+            GateTrace("weak settle=ledger");
+            return;
+        }
+        if (pending is null)
+        {
+            GateTrace("weak-orphan");
+            return;
+        }
+        pending.WeakSettled = true;
+        GateTrace("weak settle=pending");
+    }
+
+    private static (Entry?, Ledger?) OldestPk(long afterSeq, long beforeUs, bool originalOnly)
     {
         // 수신 순서라 가장 오래된 미해결 항목이 이벤트보다 늦게 왔으면 그 뒤도 모두 늦다.
         Entry? pending = null;
         foreach (Entry e in Queue)
-            if (e.Gate == Gate.Pk && e.Seq > afterSeq && e.Res == Resolution.None)
+            if (e.Gate == Gate.Pk && e.Seq > afterSeq && e.Res == Resolution.None && !e.WeakSettled
+                && !(originalOnly && e.Counter))
             {
                 if (e.Item.ReceivedUs < beforeUs) pending = e;
                 break;
@@ -356,7 +390,8 @@ internal static partial class OverlaySchedule
 
         Ledger? owed = null;
         foreach (Ledger l in Unconsumed)
-            if (l.Gate == Gate.Pk && l.Seq > afterSeq && l.ReceivedUs < beforeUs && (owed is null || l.Seq < owed.Seq))
+            if (l.Gate == Gate.Pk && l.Seq > afterSeq && l.ReceivedUs < beforeUs && !(originalOnly && l.Counter)
+                && (owed is null || l.Seq < owed.Seq))
                 owed = l;
         return (pending, owed);
     }
@@ -376,10 +411,14 @@ internal static partial class OverlaySchedule
         e.Res = how;
         e.ResolvedUs = atUs;
         if (how == Resolution.Signal) return;
+        // 눈을 모르는 주사위와 약한 창에 정산된 PK는 올 신호가 없어 장부에 올릴 것도 없다.
+        if (e.Gate == Gate.Dice && e.Pips.Count == 0) return;
+        if (e.WeakSettled) return;
         // 자기 신호 없이 공개한 줄은 모두 장부에 올린다. 그 신호가 늦게 오면 다음 줄 대신 여기서 소비된다.
         Unconsumed.Add(new Ledger
         {
-            Gate = e.Gate, Pip = e.Pip, Counter = e.Counter, Seq = e.Seq, ReceivedUs = e.Item.ReceivedUs,
+            Gate = e.Gate, Pips = new List<int>(e.Pips), Counter = e.Counter, Seq = e.Seq,
+            ReceivedUs = e.Item.ReceivedUs,
         });
     }
 
