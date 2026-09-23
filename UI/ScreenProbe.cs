@@ -43,7 +43,24 @@ internal static class ScreenProbe
 
     private static readonly Dictionary<IntPtr, string?> Paths = new();
     private static readonly Dictionary<IntPtr, bool> Active = new();
-    private static readonly Dictionary<IntPtr, bool> NameMatches = new();
+    private static readonly Dictionary<IntPtr, NameTag> NameTags = new();
+
+    // Sig < 0이면 화면 신호가 아니다. Diag는 진단 기록(ScreenProbeNames) 대상 여부.
+    private readonly struct NameTag
+    {
+        public readonly bool Diag;
+        public readonly int Sig;
+        public readonly int Pip;
+
+        public NameTag(bool diag, int sig, int pip)
+        {
+            Diag = diag; Sig = sig; Pip = pip;
+        }
+    }
+
+    private static Action<ScreenSignal, int, bool, IntPtr>? _signal;
+    private static bool _discover;
+    private static bool _diagnostic;
     private static readonly Dictionary<IntPtr, string> Texts = new();
     private static readonly Dictionary<string, int> RootChanges = new();
 
@@ -68,43 +85,53 @@ internal static class ScreenProbe
         public int State = -1;
     }
 
-    public static void Init(ManualLogSource log, Harmony harmony, bool discover, string names, string watch,
-                            string textPaths)
+    // signal이 있으면 진단과 무관하게 SetActive 후킹을 설치한다. 설치에 실패하면 false.
+    public static bool Init(ManualLogSource log, Harmony harmony, bool discover, string names, string watch,
+                            string textPaths, Action<ScreenSignal, int, bool, IntPtr>? signal = null)
     {
         _log = log;
         _namePrefixes = Split(names);
         _watches = Split(watch).Select(p => new Watch { Path = p }).ToArray();
         _textPrefixes = Split(textPaths);
-        _enabled = discover || _watches.Length > 0 || _textPrefixes.Length > 0;
+        _discover = discover;
+        _signal = signal;
+        _diagnostic = discover || _watches.Length > 0 || _textPrefixes.Length > 0;
+        _enabled = _diagnostic || signal is not null;
 
-        if (discover)
+        bool hooked = true;
+        if (discover || signal is not null)
         {
-            TryPatch(harmony, typeof(ProbeSetActivePatch), "GameObject.SetActive");
+            hooked = TryPatch(harmony, typeof(ProbeSetActivePatch), "GameObject.SetActive");
+            if (!hooked) _signal = null;
+        }
+        if (discover)
             log.LogInfo(_namePrefixes.Length == 0
                 ? "[probe] recording every SetActive change (no name filter)"
                 : $"[probe] recording SetActive for {string.Join(',', _namePrefixes)}");
-        }
         if (_textPrefixes.Length > 0)
         {
             TryPatch(harmony, typeof(ProbeTmpTextPatch), "TMP_Text text");
             TryPatch(harmony, typeof(ProbeUiTextPatch), "UI.Text text");
         }
         if (_watches.Length > 0) log.LogInfo($"[probe] watching {_watches.Length} path(s)");
+        return hooked;
     }
 
     private static string[] Split(string value) =>
         value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    private static void TryPatch(Harmony harmony, Type patch, string label)
+    private static bool TryPatch(Harmony harmony, Type patch, string label)
     {
         try
         {
             harmony.PatchAll(patch);
             _log?.LogInfo($"[probe] patched {label}");
+            return true;
         }
         catch (Exception e)
         {
             _log?.LogWarning($"[probe] could not patch {label}: {e.Message}");
+            return false;
         }
     }
 
@@ -112,11 +139,11 @@ internal static class ScreenProbe
     public static void OnScene(string scene)
     {
         if (!_enabled) return;
-        ReportStats(force: true);
+        if (_diagnostic) ReportStats(force: true);
         RootChanges.Clear();
         Paths.Clear();
         Active.Clear();
-        NameMatches.Clear();
+        NameTags.Clear();
         Texts.Clear();
         foreach (Watch w in _watches)
         {
@@ -124,14 +151,14 @@ internal static class ScreenProbe
             w.NextTry = 0;
             w.State = -1;
         }
-        Write(Time.frameCount, $"scene name={Mask(scene)}");
+        if (_diagnostic) Write(Time.frameCount, $"scene name={Mask(scene)}");
     }
 
     // SetActive 후킹은 Animator·Timeline이 네이티브로 켜는 경우와 부모가 켜져 보이게 되는 경우를 놓친다.
     // 지정 경로는 최종 가시 상태(activeInHierarchy)를 매 프레임 직접 읽는다.
     public static void Tick()
     {
-        if (!_enabled) return;
+        if (!_diagnostic) return;
         try
         {
             if (StatsClock.Elapsed.TotalSeconds >= _nextStats)
@@ -181,10 +208,12 @@ internal static class ScreenProbe
         {
             _activeCalls++;
             IntPtr key = go.Pointer;
-            if (!IsNamed(key, go)) return;
-            _nameMatched++;
+            if (!Classify(key, go, out NameTag tag) || (!tag.Diag && tag.Sig < 0)) return;
+            if (tag.Diag) _nameMatched++;
             if (Active.TryGetValue(key, out bool last) && last == value) return;
             Active[key] = value;
+            if (tag.Sig >= 0) _signal?.Invoke((ScreenSignal)tag.Sig, tag.Pip, value, key);
+            if (!tag.Diag) return;
             _activeChanges++;
 
             if (!TryPath(key, go.transform, out string? path) || path is null) return;
@@ -199,10 +228,15 @@ internal static class ScreenProbe
 
     // 이름 조회는 포인터별로 한 번만 한다. 경로 예산(40)을 같이 쓰면 FairyGUI 패널이 한 프레임에
     // 수백 개를 켜고 끌 때 대상 오브젝트까지 버려져서(측정 4 둘째 판 budgetName 12,944) 따로 크게 둔다.
-    private static bool IsNamed(IntPtr key, GameObject go)
+    private static bool Classify(IntPtr key, GameObject go, out NameTag tag)
     {
-        if (_namePrefixes.Length == 0) return true;
-        if (NameMatches.TryGetValue(key, out bool hit)) return hit;
+        if (NameTags.TryGetValue(key, out tag)) return true;
+        if (_namePrefixes.Length == 0 && _signal is null)
+        {
+            tag = new NameTag(_discover, -1, 0);
+            NameTags[key] = tag;
+            return true;
+        }
         RollFrame();
         if (_namesThisFrame >= MaxNewNamesPerFrame)
         {
@@ -211,9 +245,20 @@ internal static class ScreenProbe
         }
         _namesThisFrame++;
         string name = go.name;
-        hit = _namePrefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal));
-        NameMatches[key] = hit;
-        return hit;
+        bool diag = _discover && (_namePrefixes.Length == 0
+                                  || _namePrefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal)));
+        (int sig, int pip) = _signal is null ? (-1, 0) : SignalOf(name);
+        tag = new NameTag(diag, sig, pip);
+        NameTags[key] = tag;
+        return true;
+    }
+
+    private static (int Sig, int Pip) SignalOf(string name)
+    {
+        if (name == "BattleShow(Clone)") return ((int)ScreenSignal.Window, 0);
+        if (name.StartsWith("BattleShow_Atk", StringComparison.Ordinal)) return ((int)ScreenSignal.Hit, 0);
+        Match dice = DiceFace.Match(name);
+        return dice.Success ? ((int)ScreenSignal.DiceFace, int.Parse(dice.Groups[1].Value)) : (-1, 0);
     }
 
     // 텍스트는 경로 필터를 통과한 뒤에만 읽는다. TMP getter는 버퍼를 문자열로 다시 만들 수 있어서다.

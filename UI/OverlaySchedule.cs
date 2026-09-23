@@ -12,7 +12,7 @@ namespace AstralPartyBattleLog.UI;
 /// 로그 줄을 게임 화면이 그 장면에 도달할 때 오버레이에 내보낸다.
 /// 재생 모델과 측정값은 <c>docs/OVERLAY-TIMING.md</c>.
 /// </summary>
-internal static class OverlaySchedule
+internal static partial class OverlaySchedule
 {
     private enum Signal { Line, Page, Clear, Sync, Advance }
 
@@ -27,12 +27,13 @@ internal static class OverlaySchedule
         public readonly int Generation;
         public readonly string? Text;
         public readonly int Round;
+        public readonly int Detail;
 
         public Item(Signal signal, LineKind kind, long group, int units, long receivedUs, float speed,
-                    int generation, string? text, int round)
+                    int generation, string? text, int round, int detail)
         {
             Signal = signal; Kind = kind; Group = group; Units = units; ReceivedUs = receivedUs;
-            Speed = speed; Generation = generation; Text = text; Round = round;
+            Speed = speed; Generation = generation; Text = text; Round = round; Detail = detail;
         }
     }
 
@@ -90,9 +91,12 @@ internal static class OverlaySchedule
 
     public static bool TraceTiming => TimingTrace.Enabled;
 
-    public static void Init(ManualLogSource log, bool enabled, int maxLagMs, bool traceTiming)
+    public static void Init(ManualLogSource log, bool enabled, int maxLagMs, bool traceTiming,
+                            bool screenSignals = false)
     {
         _enabled = enabled;
+        _gating = enabled && screenSignals;
+        _anchorUs = long.MinValue;
         _maxLagUs = Math.Max(0, maxLagMs) * 1000L;
         TimingTrace.Init(log, traceTiming);
     }
@@ -118,6 +122,10 @@ internal static class OverlaySchedule
     public static void Line(string text, LineKind kind, long group, int units) =>
         Push(Signal.Line, kind, group, units, text, 0);
 
+    // detail: 주사위 줄이면 캐릭터 주사위 한 개의 눈(모르면 0), PK 줄이면 반격 여부(1/0).
+    public static void Line(string text, LineKind kind, long group, int units, int detail) =>
+        Push(Signal.Line, kind, group, units, text, 0, detail);
+
     public static void Advance(LineKind kind, long group, int units) =>
         Push(Signal.Advance, kind, group, units, null, 0);
 
@@ -139,14 +147,20 @@ internal static class OverlaySchedule
         Interlocked.Increment(ref _generation);
     }
 
-    private static void Push(Signal signal, LineKind kind, long group, int units, string? text, int round) =>
+    private static void Push(Signal signal, LineKind kind, long group, int units, string? text, int round,
+                             int detail = 0) =>
         Incoming.Enqueue(new Item(signal, kind, group, units, Volatile.Read(ref _nowUs),
                                   Volatile.Read(ref _speed), Volatile.Read(ref _generation),
-                                  text, round));
+                                  text, round, detail));
 
     public static void Pump(Action<string> line, Action<int> page, Action clear)
     {
         long now = _nowUs;
+        if (_gating)
+        {
+            PumpGated(now, line, page, clear);
+            return;
+        }
 
         while (Incoming.TryDequeue(out Item item))
         {
@@ -188,7 +202,9 @@ internal static class OverlaySchedule
         if (item.Generation != _scheduleGeneration || item.Signal == Signal.Clear)
         {
             _scheduleGeneration = item.Generation;
-            _cursorUs = item.ReceivedUs;
+            // 앵커는 판 전환(ResetGating)에서만 지운다. 신호로 공개한 줄은 여기를 거치지 않아, 그 뒤 첫 줄에서
+            // 지우면 방금 세운 앵커가 사라져 뒤 줄이 몰려 나온다(하네스 G13).
+            _cursorUs = Math.Max(item.ReceivedUs, _anchorUs);
             _lastGroup = -1;
             ResetSegment(item.ReceivedUs);
         }
@@ -196,7 +212,7 @@ internal static class OverlaySchedule
         if (item.Signal is Signal.Sync or Signal.Clear)
         {
             if (item.Signal == Signal.Sync) TraceSegment(item);
-            _cursorUs = item.ReceivedUs;
+            _cursorUs = Math.Max(item.ReceivedUs, _anchorUs);
             _lastGroup = -1;
             ResetSegment(item.ReceivedUs);
             return item.ReceivedUs;
@@ -214,7 +230,9 @@ internal static class OverlaySchedule
         TraceItem(item, idle);
 
         long start = Math.Max(item.ReceivedUs, _cursorUs);
-        start = Math.Min(start, item.ReceivedUs + _maxLagUs);
+        // 장벽 뒤에서 기다린 줄은 앵커부터 지연을 센다. 수신 기준이면 모두 앵커로 당겨져 몰려 나온다(하네스 G13).
+        start = Math.Min(start, Math.Max(item.ReceivedUs, _anchorUs) + _maxLagUs);
+        start = Math.Max(start, _anchorUs);
 
         long due = start;
         if (_enabled)

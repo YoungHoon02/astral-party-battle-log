@@ -204,6 +204,8 @@ internal sealed class Roster
 
     public bool Knows(long id) => _entries.ContainsKey(id);
 
+    public bool IsCharacter(long id) => _entries.TryGetValue(id, out Entry? e) && !e.IsMonster;
+
     public bool IsEmpty => _entries.Count == 0;
 
     // false면 표시명이 아직 계정 닉네임이나 `2P` 같은 자리표시자다. 계정 정보가 로그에 새지 않게 거른다.

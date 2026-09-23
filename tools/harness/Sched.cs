@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using AstralPartyBattleLog.Log;
+using AstralPartyBattleLog.Net;
 using AstralPartyBattleLog.UI;
 using BepInEx.Logging;
 
@@ -28,9 +30,12 @@ static class Sched
         Out.Clear();
     }
 
-    static void Setup(ManualLogSource log, bool enabled = true, int maxLagMs = 60000)
+    static void Sig(ScreenSignal kind, bool on, int pip = 0, int instance = 0) =>
+        OverlaySchedule.Screen(kind, pip, on, (IntPtr)instance);
+
+    static void Setup(ManualLogSource log, bool enabled = true, int maxLagMs = 60000, bool signals = false)
     {
-        OverlaySchedule.Init(log, enabled, maxLagMs, false);
+        OverlaySchedule.Init(log, enabled, maxLagMs, false, signals);
         OverlaySchedule.Discard();
         Advance(0.001);
         Out.Clear();
@@ -283,7 +288,346 @@ static class Sched
         Advance(0.1);
         Expect("P22 t=6.4", "pk");
 
+        RunScreenSignals(log);
+
         Console.WriteLine(_fail == 0 ? "=== 전부 통과 ===" : $"=== 실패 {_fail}건 ===");
         return _fail;
+    }
+
+    // 실제 패킷 → BattleLogger → MirrorTagged → 게이트 → 화면 신호까지 한 경로로 확인한다.
+    static void RunLoggerTags(ManualLogSource log)
+    {
+        const long Char = 100, Monster = 200;
+        var names = NameTable.Load(Path.Combine(Path.GetTempPath(), "apbl-harness-no-names.tsv"), _ => { });
+        var lg = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
+        var tags = new List<string>();
+        lg.MirrorTagged = (s, k, g, u, d) =>
+        {
+            if (k is LineKind.Dice or LineKind.Attack) tags.Add($"{k}:{d}");
+            OverlaySchedule.Line(k.ToString(), k, g, u, d);
+        };
+
+        Setup(log, signals: true);
+        lg.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Frame.Msg(1, Frame.Cat(
+            Frame.Fix64(1, 77),
+            Frame.Msg(9, Frame.Cat(Frame.Fix64(1, Char), Frame.Varint(6, 0), Frame.Msg(10, Frame.Fix64(2, 1001)))),
+            Frame.Msg(10, Frame.Cat(Frame.Fix64(1, Monster), Frame.Msg(10, Frame.Fix64(2, 5001)))))));
+        Advance(0.001);
+        Out.Clear();
+
+        void Dice(long pid, params int[] pips)
+        {
+            var parts = new List<byte[]>();
+            foreach (int p in pips) parts.Add(Frame.Varint(1, (ulong)p));
+            parts.Add(Frame.Fix64(3, pid));
+            lg.OnFrame(new FrameHeader(Op.ThrowDice, 0, 0, 0), Frame.Cat(parts.ToArray()));
+        }
+        void Battle(long attacker, long defender, bool counter) =>
+            lg.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), Frame.Msg(1, Frame.Cat(
+                Frame.Fix64(1, 1), Frame.Msg(2, Frame.Fix64(1, attacker)), Frame.Msg(3, Frame.Fix64(1, defender)),
+                Frame.Varint(5, 1), Frame.Varint(8, counter ? 1UL : 0UL))));
+
+        Dice(Char, 6);
+        Dice(Monster, 4);
+        Dice(Char, 3, 2);
+        Battle(Char, Monster, counter: false);
+        Battle(Monster, Char, counter: true);
+        bool ok = string.Join(",", tags) == "Dice:6,Dice:0,Dice:0,Attack:0,Attack:1";
+        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} L1 로거가 캐릭터 주사위 눈·몬스터/두 개 주사위 0·반격 여부를 넘긴다: "
+                          + $"[{string.Join(", ", tags)}]");
+        if (!ok) _fail++;
+
+        Advance(1.0);
+        Expect("L2 로거 경로로 들어온 결과는 신호 전에는 공개하지 않는다");
+        Sig(ScreenSignal.DiceFace, false, 6);
+        Advance(0.001);
+        Expect("L2 캐릭터 주사위 눈 신호로 공개", "Dice");
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("L2 PK 타격에 공개, 앞의 몬스터·두 개 주사위는 늦은 경로로", "Dice", "Dice", "Attack");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Advance(7.0);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("L2 반격 표시로 같은 창의 다음 타격에 공개", "Attack");
+    }
+
+    // docs/SIGNAL-GATING.md 6절 검증 계획
+    static void RunScreenSignals(ManualLogSource log)
+    {
+        Console.WriteLine("=== 화면 신호 공개 ===");
+        const LineKind Dice = LineKind.Dice, Pk = LineKind.Attack;
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("d1", Dice, 1, 3, 6);
+        OverlaySchedule.Line("d2", Dice, 2, 3, 6);
+        Advance(1.0);
+        Expect("G1 신호 전에는 주사위를 공개하지 않는다");
+        Sig(ScreenSignal.DiceFace, false, 6);
+        Advance(0.001);
+        Expect("G1 같은 눈 첫 신호", "d1");
+        Advance(1.0);
+        Sig(ScreenSignal.DiceFace, false, 6);
+        Advance(0.001);
+        Expect("G1 같은 눈 둘째 신호", "d2");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("d1", Dice, 1, 3, 3);
+        OverlaySchedule.Line("d2", Dice, 2, 5, 5);
+        Advance(0.5);
+        Sig(ScreenSignal.DiceFace, false, 5);
+        Advance(0.001);
+        Expect("G2 앞 주사위 신호가 빠지면 뒤 신호에 함께 공개", "d1", "d2");
+        OverlaySchedule.Line("d3", Dice, 3, 3, 3);
+        Advance(0.5);
+        Sig(ScreenSignal.DiceFace, false, 3);
+        Advance(0.001);
+        Expect("G2 늦게 온 앞 신호는 장부에서 소비되어 다음 주사위를 공개하지 않는다");
+        Sig(ScreenSignal.DiceFace, false, 3);
+        Advance(0.001);
+        Expect("G2 제 신호", "d3");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        OverlaySchedule.Line("dmg", LineKind.Hit, 1, 0);
+        OverlaySchedule.Line("after", LineKind.Effect, 2, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Sig(ScreenSignal.Hit, true, instance: 3);
+        Advance(0.001);
+        Expect("G3 연타(겹친 인스턴스 3개)는 스트라이크 하나, 피해 줄은 함께", "pk", "dmg");
+        Advance(1.0);
+        Expect("G3 뒤 줄은 창 꺼짐까지 기다린다");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Sig(ScreenSignal.Hit, false, instance: 2);
+        Sig(ScreenSignal.Hit, false, instance: 3);
+        Sig(ScreenSignal.Window, false);
+        Advance(0.001);
+        Expect("G3 창 꺼짐 뒤", "after");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk1", Pk, 1, 0, 0);
+        OverlaySchedule.Line("pk2", Pk, 2, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("G4 연타 둘째 인스턴스는 다음 PK를 공개하지 않는다", "pk1");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Sig(ScreenSignal.Hit, false, instance: 2);
+        Advance(1.0);
+        Sig(ScreenSignal.Hit, true, instance: 3);
+        Advance(0.001);
+        Expect("G4 반격이 아닌 다음 PK는 두 번째 스트라이크로 공개하지 않는다");
+        Sig(ScreenSignal.Hit, false, instance: 3);
+        Sig(ScreenSignal.Window, false);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 4);
+        Advance(0.001);
+        Expect("G4 다음 창의 첫 스트라이크", "pk2");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        OverlaySchedule.Line("ctr", Pk, 2, 0, 1);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("G5 원래 PK는 첫 스트라이크", "pk");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Advance(7.0);
+        Expect("G5 반격은 아직");
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("G5 반격은 같은 창의 다음 스트라이크", "ctr");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("G6 원래 PK", "pk");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Advance(7.0);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Sig(ScreenSignal.Hit, false, instance: 2);
+        OverlaySchedule.Line("ctr", Pk, 2, 0, 1);
+        OverlaySchedule.Line("d", Dice, 3, 4, 4);
+        Advance(1.0);
+        Expect("G6 스트라이크보다 늦게 받은 반격은 그 스트라이크로 공개하지 않는다");
+        Sig(ScreenSignal.Window, false);
+        Advance(0.001);
+        Expect("G6 창이 닫혀도 공개하지 않는다");
+        Sig(ScreenSignal.DiceFace, false, 4);
+        Advance(0.001);
+        Expect("G6 뒤 사건의 신호에 늦게 공개", "ctr", "d");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("old", Pk, 1, 0, 0);
+        OverlaySchedule.Line("d", Dice, 2, 2, 2);
+        Advance(0.5);
+        Sig(ScreenSignal.DiceFace, false, 2);
+        Advance(0.001);
+        Expect("G7 앞 PK는 뒤 주사위 신호로 늦게 공개(장부 등록)", "old", "d");
+        OverlaySchedule.Line("pk", Pk, 3, 0, 0);
+        OverlaySchedule.Line("ctr", Pk, 4, 0, 1);
+        Advance(0.5);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("G7 첫 스트라이크는 장부 항목에 소비");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Advance(7.0);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("G7 그 창의 두 번째 스트라이크는 다음 결과를 공개하지 않는다");
+        Sig(ScreenSignal.Hit, false, instance: 2);
+        Sig(ScreenSignal.Window, false);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 3);
+        Advance(0.001);
+        Expect("G7 다음 창에서 제 순서로", "pk");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(10.0);
+        Sig(ScreenSignal.Window, false);
+        Advance(0.001);
+        Expect("G8 결과 수신 뒤 10초 유지된 타격 없는 창은 공개하지 않는다");
+        OverlaySchedule.Line("d", Dice, 2, 5, 5);
+        Advance(0.5);
+        Sig(ScreenSignal.DiceFace, false, 5);
+        Advance(0.001);
+        Expect("G8 뒤 사건의 신호에 늦게 공개", "pk", "d");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        Advance(3.0);
+        Sig(ScreenSignal.Window, false);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("G9 켜짐 없는 꺼짐과 창 밖 타격은 무시");
+
+        Setup(log, signals: true);
+        Sig(ScreenSignal.Window, true);
+        Advance(5.0);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        Advance(2.7);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("G10 수신보다 먼저 열린 창도 수신 뒤 첫 스트라이크로 공개", "pk");
+
+        Setup(log, signals: true);
+        Advance(0.001, 2f);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(0.5, 2f);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001, 2f);
+        Expect("G11 2배속, 켜짐 뒤 0.5초의 타격도 공개(시간 문턱 없음)", "pk");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("d", Dice, 1, 2, 2);
+        Advance(0.1);
+        OverlaySchedule.Sync(Op.TimeWasting, 9);
+        OverlaySchedule.Sync(Op.TimeWasting, 14);
+        OverlaySchedule.Sync(5036, 14);
+        Advance(1.0);
+        Expect("G12 동기화는 신호 대기 주사위를 내보내지 않는다");
+        Sig(ScreenSignal.DiceFace, false, 2);
+        Advance(0.001);
+        Expect("G12 신호", "d");
+
+        Setup(log, maxLagMs: 1000, signals: true);
+        OverlaySchedule.Line("d", Dice, 1, 6, 6);
+        OverlaySchedule.Line("turn", LineKind.Turn, 2, 0);
+        OverlaySchedule.Sync(Op.TimeWasting, 14);
+        OverlaySchedule.Line("card", LineKind.Card, 3, 0);
+        OverlaySchedule.Line("eff", LineKind.Effect, 4, 0);
+        Advance(10.0);
+        Expect("G13 주사위 장벽 뒤 줄은 보류");
+        Sig(ScreenSignal.DiceFace, false, 6);
+        Advance(0.001);
+        Expect("G13 주사위만 공개", "d");
+        Advance(1.5);
+        Expect("G13 뒤 줄은 앵커(신호+1.56초) 전에는 안 뜬다 — 동기화·지연 상한도 못 당긴다 (t=11.50)");
+        Advance(0.1);
+        Expect("G13 앵커에서 재예약 (t=11.60)", "turn", "card");
+        Advance(0.9);
+        Expect("G13 한꺼번에 몰리지 않는다 (t=12.50)");
+        Advance(0.1);
+        Expect("G13 지연 상한(1초)은 수신이 아니라 앵커부터 센다 (t=12.60)", "eff");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        Advance(59.9);
+        Expect("G14 상한 전");
+        Advance(0.2);
+        Expect("G14 상한 60초에 공개(장부 등록)", "pk");
+        OverlaySchedule.Line("pk2", Pk, 2, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("G14 상한 공개 뒤 늦은 타격은 장부에서 소비");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Sig(ScreenSignal.Window, false);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("G14 다음 PK는 제 타격에", "pk2");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(1.0);
+        OverlaySchedule.Discard();
+        Advance(0.001);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Advance(0.001);
+        Expect("G15 이탈하면 대기 줄·창을 버린다");
+        OverlaySchedule.Line("pk2", Pk, 2, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("G15 새 세대는 정상", "pk2");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk1", Pk, 1, 0, 0);
+        OverlaySchedule.Line("pk2", Pk, 2, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("G17 첫 PK", "pk1");
+        Sig(ScreenSignal.Window, false);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("G17 타격 꺼짐을 놓쳐도 다음 창의 첫 타격은 스트라이크", "pk2");
+
+        RunLoggerTags(log);
+
+        Setup(log, signals: false);
+        OverlaySchedule.Line("d", Dice, 1, 3, 3);
+        Advance(1.55);
+        Expect("G16 신호를 끄면 기존 모델(쉬는 화면 1.60초)");
+        Advance(0.1);
+        Expect("G16 t=1.65", "d");
     }
 }

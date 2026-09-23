@@ -30,6 +30,7 @@
     <Compile Include="$(SrcDir)\Net\FrameHeader.cs" />
     <Compile Include="$(SrcDir)\Net\FrameReassembler.cs" />
     <Compile Include="$(SrcDir)\UI\OverlaySchedule.cs" />
+    <Compile Include="$(SrcDir)\UI\OverlaySchedule.Gate.cs" />
   </ItemGroup>
 
   <ItemGroup>
