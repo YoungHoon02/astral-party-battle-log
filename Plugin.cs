@@ -124,6 +124,23 @@ public class Plugin : BasePlugin
             "화면 지연을 재기 위한 기록(수신 프레임 헤더, PK 진행, 표시 시각)을 BepInEx 로그에 남긴다. " +
             "켜면 F10으로 \"지금 화면에서 본 장면\"의 시각을 남길 수 있다. 측정이 끝나면 false로 둘 것.");
 
+        ConfigEntry<bool> probeDiscover = Config.Bind(
+            "Diagnostics", "ScreenProbe", false,
+            "화면 신호 후보를 찾기 위해 GameObject 활성 전환(경로·시각)을 BepInEx 로그에 남긴다. " +
+            "오버레이 표시에는 영향이 없다. 측정이 끝나면 false로 둘 것.");
+        ConfigEntry<string> probeNames = Config.Bind(
+            "Diagnostics", "ScreenProbeNames", ScreenProbe.DefaultNames,
+            "ScreenProbe가 기록할 오브젝트 이름 접두어(세미콜론 구분). 첫 판에서 사건과 1:1로 맞은 연출 " +
+            "오브젝트가 기본값이다. 비우면 모든 활성 전환을 기록한다(후보 찾기용, 부하가 크다).");
+        ConfigEntry<string> probeWatch = Config.Bind(
+            "Diagnostics", "ScreenProbeWatch", "",
+            "매 프레임 activeInHierarchy를 읽을 오브젝트 전체 경로(세미콜론 구분). ScreenProbe 로그의 " +
+            "path= 값을 그대로 넣는다. 비우면 폴링하지 않는다.");
+        ConfigEntry<string> probeText = Config.Bind(
+            "Diagnostics", "ScreenProbeText", "",
+            "텍스트 변경을 기록할 오브젝트 경로 접두어(세미콜론 구분). 숫자만 남기고 6자리 이상은 가린다. " +
+            "비우면 텍스트 후킹을 설치하지 않는다.");
+
         if (showOverlay.Value)
         {
             if (!Enum.TryParse(overlayKey.Value, ignoreCase: true, out KeyCode toggle))
@@ -155,6 +172,7 @@ public class Plugin : BasePlugin
             // 오버레이를 꺼도 씬 감지·이름표 수집에 필요하다.
             _harmony.PatchAll(typeof(FramePump));
             Log.LogInfo("Socket patches applied. Waiting for battle traffic.");
+            ScreenProbe.Init(Log, _harmony, probeDiscover.Value, probeNames.Value, probeWatch.Value, probeText.Value);
         }
         catch (Exception e)
         {

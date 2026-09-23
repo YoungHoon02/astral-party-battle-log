@@ -33,12 +33,14 @@ internal static class FramePump
             if (scene != _scene)
             {
                 _scene = scene;
+                ScreenProbe.OnScene(scene);
                 OnSceneChanged?.Invoke(scene);
             }
         }
         catch { }
 
         Log.NameHarvest.Tick();
+        ScreenProbe.Tick();
 
         PumpSchedule();
         LogOverlay.Pump();

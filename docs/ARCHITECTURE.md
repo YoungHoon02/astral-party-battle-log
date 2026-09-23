@@ -18,7 +18,9 @@ HybridCLR 핫업데이트 어셈블리(타입 9,803개)이고, `Assembly-CSharp.
 잡는다.
 
 **그래서 AOT 계층만 패치한다.** 이 플러그인은 `Il2CppSystem.Net.Sockets.Socket`의
-`BeginReceive`/`EndReceive`만 Postfix로 건드린다.
+`BeginReceive`/`EndReceive`만 Postfix로 건드린다. 진단 설정 `ScreenProbe*`을 켰을 때만
+`GameObject.SetActive`·`TMP_Text`/`UI.Text` 텍스트 setter에 기록용 Postfix가 추가된다
+([OVERLAY-TIMING.md](OVERLAY-TIMING.md) 측정 4).
 
 ## 절대 하면 안 되는 것 (크래시 확정)
 
