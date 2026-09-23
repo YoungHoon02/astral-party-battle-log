@@ -35,8 +35,9 @@ static class Sched
 
     static void Setup(ManualLogSource log, bool enabled = true, int maxLagMs = 60000, bool signals = false)
     {
-        OverlaySchedule.Init(log, enabled, maxLagMs, false, signals);
+        OverlaySchedule.Init(log, enabled, maxLagMs, false);
         OverlaySchedule.Discard();
+        if (!signals) OverlaySchedule.FallBackToModel();
         Advance(0.001);
         Out.Clear();
     }
@@ -789,7 +790,7 @@ static class Sched
         OverlaySchedule.Line("card", LineKind.Card, 2, 0, 0);
         Advance(1.0);
         Expect("G21 신호 대기 중");
-        OverlaySchedule.DisableScreenSignals();
+        OverlaySchedule.FallBackToModel();
         Advance(0.55);
         Expect("G21 신호가 끊기면 대기 줄을 모델 예약으로 넘긴다 (t=1.55)");
         Advance(0.1);
@@ -803,12 +804,47 @@ static class Sched
         Advance(0.2);
         Expect("G21 모델 예약 (t=5.65)", "d2");
 
+        // 측정 4 여덟째 판: 신호를 받은 주사위가 앞 일반 줄의 모델 대기(카드 2.87초) 뒤에 나왔다.
+        Setup(log, signals: true);
+        OverlaySchedule.Line("card", LineKind.Card, 1, 0, 0);
+        OverlaySchedule.Line("eff", LineKind.Effect, 2, 0, 0);
+        OverlaySchedule.Line("d", Dice, 3, 3, 3);
+        Advance(0.1);
+        Expect("G22 카드", "card");
+        Advance(1.1);
+        Sig(ScreenSignal.DiceFace, false, 3);
+        Advance(0.001);
+        Expect("G22 뒤 주사위 신호가 오면 앞 일반 줄의 모델 대기를 풀고 함께 (t=1.2)", "eff", "d");
+        OverlaySchedule.Line("after", LineKind.Effect, 4, 0, 0);
+        Advance(1.5);
+        Expect("G22 뒤 줄은 여전히 앵커(신호+1.56초) 전에는 안 뜬다 (t=2.7)");
+        Advance(0.1);
+        Expect("G22 앵커 뒤 (t=2.8)", "after");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("card", LineKind.Card, 1, 0, 0);
+        OverlaySchedule.Line("eff", LineKind.Effect, 2, 0, 0);
+        OverlaySchedule.Line("m", Dice, 3, 3, 0);
+        OverlaySchedule.Line("d", Dice, 4, 3, 5);
+        Advance(1.2);
+        Expect("G23 카드", "card");
+        Sig(ScreenSignal.DiceFace, false, 5);
+        Advance(0.001);
+        Expect("G23 늦은 경로로 풀린 줄도 뒤 신호 앞이면 함께", "eff", "m", "d");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("card", LineKind.Card, 1, 0, 0);
+        OverlaySchedule.Line("eff", LineKind.Effect, 2, 0, 0);
+        OverlaySchedule.Line("m", Dice, 3, 3, 0);
+        Advance(60.1);
+        Expect("G24 상한 공개는 화면 위치를 모르므로 앞 줄을 당기지 않는다 — 앞 줄은 모델대로 먼저", "card", "eff", "m");
+
         RunLoggerTags(log);
 
         Setup(log, signals: false);
         OverlaySchedule.Line("d", Dice, 1, 3, 3);
         Advance(1.55);
-        Expect("G16 신호를 끄면 기존 모델(쉬는 화면 1.60초)");
+        Expect("G16 후킹 실패로 모델로 돌아가면 기존 모델(쉬는 화면 1.60초)");
         Advance(0.1);
         Expect("G16 t=1.65", "d");
     }

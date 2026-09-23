@@ -79,11 +79,11 @@ internal static partial class OverlaySchedule
     private static Window? _barrier;
     private static long _barrierCapUs;
 
-    public static bool ScreenSignalsEnabled => _gating;
+    public static bool UsesScreenSignals => _gating;
 
     // 후킹 설치 실패나 반복 오류로 신호가 끊기면 모델 경로로 돌아간다. 조기 표시 위험은 측정 4 넷째 판과 같다.
     // 대기 중인 줄은 신호를 더 받을 수 없으므로 모델 예약으로 넘긴다. 메인 스레드에서만 부른다.
-    public static void DisableScreenSignals()
+    public static void FallBackToModel()
     {
         if (!_gating) return;
         _gating = false;
@@ -203,7 +203,7 @@ internal static partial class OverlaySchedule
     {
         if (_barrier is null) return true;
         if (!_barrier.Ended && now < _barrierCapUs) return false;
-        Anchor(_barrier.Ended ? _barrier.EndUs : now);
+        Anchor(_barrier.Ended ? _barrier.EndUs : now, seen: _barrier.Ended);
         _barrier = null;
         return true;
     }
@@ -239,10 +239,12 @@ internal static partial class OverlaySchedule
         return true;
     }
 
-    private static void Anchor(long atUs)
+    // seen: 화면 신호가 이 시각의 화면 위치를 보여 줬다. 그 앞 줄들로 민 모델 커서는 낡은 추정이라 앵커로
+    // 되돌린다(동기화와 같은 이유). 늦은 경로·상한은 화면 위치를 모르므로 커서를 당기지 않는다.
+    private static void Anchor(long atUs, bool seen = false)
     {
         _anchorUs = Math.Max(_anchorUs, atUs);
-        _cursorUs = Math.Max(_cursorUs, atUs);
+        _cursorUs = seen ? _anchorUs : Math.Max(_cursorUs, atUs);
     }
 
     private static void ReleaseGated(Entry head, long now, Action<string> line, Action<int> page, Action clear)
@@ -269,10 +271,10 @@ internal static partial class OverlaySchedule
         }
         if (head.Gate == Gate.Dice)
         {
-            Anchor(head.ResolvedUs + (long)(DiceTailUs / head.Item.Speed));
+            Anchor(head.ResolvedUs + (long)(DiceTailUs / head.Item.Speed), seen: true);
             return;
         }
-        if (head.Win is { Ended: true } done) Anchor(done.EndUs);
+        if (head.Win is { Ended: true } done) Anchor(done.EndUs, seen: true);
         else if (head.Win is not null)
         {
             _barrier = head.Win;
@@ -461,7 +463,13 @@ internal static partial class OverlaySchedule
     {
         e.Res = how;
         e.ResolvedUs = atUs;
-        if (how == Resolution.Signal) return;
+        if (how == Resolution.Signal)
+        {
+            // 화면이 이 사건에 왔으면 앞 줄의 연출은 이미 지났다(설계 전제 1). 앞 일반 줄의 모델 대기를 풀지
+            // 않으면 신호를 받은 줄도 그 뒤에서 기다린다(측정 4 여덟째 판 +2.88·+3.48초).
+            _forceThroughSeq = Math.Max(_forceThroughSeq, e.Seq);
+            return;
+        }
         // 눈을 모르는 주사위와 약한 창에 정산된 PK는 올 신호가 없어 장부에 올릴 것도 없다.
         if (e.Gate == Gate.Dice && e.Pips.Count == 0) return;
         if (e.WeakSettled) return;

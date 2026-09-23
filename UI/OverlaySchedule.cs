@@ -91,11 +91,11 @@ internal static partial class OverlaySchedule
 
     public static bool TraceTiming => TimingTrace.Enabled;
 
-    public static void Init(ManualLogSource log, bool enabled, int maxLagMs, bool traceTiming,
-                            bool screenSignals = false)
+    // 연출 동기화를 켜면 화면 신호 게이트로 시작한다. 후킹을 못 걸면 FallBackToModel로 추정 방식에 남는다.
+    public static void Init(ManualLogSource log, bool enabled, int maxLagMs, bool traceTiming)
     {
         _enabled = enabled;
-        _gating = enabled && screenSignals;
+        _gating = enabled;
         _anchorUs = long.MinValue;
         _maxLagUs = Math.Max(0, maxLagMs) * 1000L;
         TimingTrace.Init(log, traceTiming);
