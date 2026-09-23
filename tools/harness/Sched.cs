@@ -38,11 +38,12 @@ static class Sched
     {
         for (int i = 0; i < 2; i++)
         {
+            // 실게임처럼 다른 팁(8)이 함께 켜져 1.9초 뒤 먼저 꺼진다.
             Sig(ScreenSignal.TopTip, true, instance: 7);
             Sig(ScreenSignal.TopTip, true, instance: 8);
-            Advance(0.4);
+            Advance(1.9);
             Sig(ScreenSignal.TopTip, false, instance: 8);
-            Advance(1.6);
+            Advance(0.1);
             Sig(ScreenSignal.TopTip, false, instance: 7);
             Advance(0.1);
         }

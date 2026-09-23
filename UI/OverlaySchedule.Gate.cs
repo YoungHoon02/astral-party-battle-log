@@ -64,9 +64,10 @@ internal static partial class OverlaySchedule
     private const long GateCapUs = 60_000_000;
     // 주사위 연출 2.70초 − 관측 최소 굴림 1.14초. 결과가 보인 뒤 이동이 끝나기까지.
     private const long DiceTailUs = 1_560_000;
-    // 차례 배너는 게임이 2초 띄운다. 같은 이름의 생각 중 팁과 가르는 기준이다.
+    // 차례 배너는 게임이 2초 띄운다. 같은 이름의 다른 팁은 배너와 함께 켜져 1.90~1.95초 떠 있다가 꺼져서
+    // 오차를 좁게 둔다(셋째 수집: 배너 1.991~2.010초).
     private const long BannerUs = 2_000_000;
-    private const long BannerToleranceUs = 150_000;
+    private const long BannerToleranceUs = 35_000;
     private const int BannerVotes = 2;
 
     private static bool _gating;

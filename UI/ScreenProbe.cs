@@ -97,8 +97,11 @@ internal static class ScreenProbe
         RollFrame();
         if (_namesThisFrame >= MaxNewNamesPerFrame) return false;
         _namesThisFrame++;
-        tag = SignalOf(go.name);
-        Tags[key] = tag;
+        string name = go.name;
+        tag = SignalOf(name);
+        // FairyGUI는 오브젝트를 "GComponent"로 만든 뒤 패키지 이름으로 바꾼다. 바뀌기 전 이름을 캐시하면
+        // 라운드 팁·차례 배너가 영영 신호로 잡히지 않는다(docs/SIGNAL-GATING.md 셋째 수집).
+        if (tag is not null || name != "GComponent") Tags[key] = tag;
         return true;
     }
 
