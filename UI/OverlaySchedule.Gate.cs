@@ -22,6 +22,7 @@ internal static partial class OverlaySchedule
         public bool Counter;
         // 타격 없이 닫힌 자기 창에 정산됐다. 타격 후보에서 빠지고, 신호 없이 공개돼도 장부에 오르지 않는다.
         public bool WeakSettled;
+        public bool HeldTraced;
         public bool Scheduled;
         public long DueUs, FloorUs;
         public Resolution Res;
@@ -146,7 +147,12 @@ internal static partial class OverlaySchedule
                 continue;
             }
 
-            if (!BarrierLifted(now) && Queue.Count <= MaxWaiting) break;
+            bool toCounter = false;
+            if (!BarrierLifted(now) && Queue.Count <= MaxWaiting)
+            {
+                toCounter = SyncBeforeCounter();
+                if (!toCounter) break;
+            }
 
             if (!head.Scheduled)
             {
@@ -154,7 +160,7 @@ internal static partial class OverlaySchedule
                 head.Scheduled = true;
             }
             long ready = head.Seq <= _forceThroughSeq ? Math.Max(head.FloorUs, _anchorUs) : head.DueUs;
-            if (ready > now && Queue.Count <= MaxWaiting) break;
+            if (!toCounter && ready > now && Queue.Count <= MaxWaiting) break;
 
             Queue.RemoveAt(0);
             Release(new Scheduled(head.Item, head.DueUs, head.FloorUs, head.Seq), now, line, page, clear);
@@ -185,6 +191,37 @@ internal static partial class OverlaySchedule
         if (!_barrier.Ended && now < _barrierCapUs) return false;
         Anchor(_barrier.Ended ? _barrier.EndUs : now);
         _barrier = null;
+        return true;
+    }
+
+    // 반격 전 카드 선택 응답(5036)은 원래 PK와 반격 사이에 온다. 화면에 보이지 않으므로 같은 창의 반격이
+    // 타격에 짝지어졌으면 먼저 처리해 반격을 타격 시점에 낸다. 장벽은 반격이 다시 세운다(측정 4 다섯째 판 재생).
+    // 사이에 보이는 줄이나 미해결 결과가 있으면 근거 범위 밖이라 기다리고 기록만 남긴다.
+    private static bool SyncBeforeCounter()
+    {
+        Entry? counter = null;
+        int end = 0;
+        for (; end < Queue.Count; end++)
+            if (Queue[end].Gate == Gate.Pk && Queue[end].Counter && Queue[end].Res == Resolution.Signal
+                && Queue[end].Win == _barrier)
+            {
+                counter = Queue[end];
+                break;
+            }
+        if (counter is null) return false;
+
+        for (int i = 0; i < end; i++)
+        {
+            Item it = Queue[i].Item;
+            if (it.Signal == Signal.Sync && it.Units == Op.BattleUseCard) continue;
+            if (!counter.HeldTraced)
+            {
+                counter.HeldTraced = true;
+                GateTrace($"counter-held by={(Queue[i].Gate != Gate.None ? Queue[i].Gate.ToString() : it.Kind.ToString()).ToLowerInvariant()} "
+                          + $"signal={it.Signal.ToString().ToLowerInvariant()}");
+            }
+            return false;
+        }
         return true;
     }
 

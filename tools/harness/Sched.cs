@@ -659,6 +659,51 @@ static class Sched
         Advance(0.001);
         Expect("G18 제 신호", "next");
 
+        // 측정 4 다섯째 판 재생: 원래 PK와 반격 사이의 5036이 창 장벽에 걸려 반격이 창 종료까지 밀렸다.
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        OverlaySchedule.Line("pkhit", LineKind.Hit, 1, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("G19 원래 PK는 첫 스트라이크", "pk", "pkhit");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        OverlaySchedule.Sync(5036, 9);
+        Advance(2.0);
+        OverlaySchedule.Line("ctr", Pk, 2, 0, 1);
+        OverlaySchedule.Line("ctrhit", LineKind.Hit, 2, 0);
+        OverlaySchedule.Line("after", LineKind.Skill, 3, 0);
+        Advance(3.0);
+        Expect("G19 반격은 아직");
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("G19 5036을 넘어 반격·피해를 타격 시점에", "ctr", "ctrhit");
+        Sig(ScreenSignal.Hit, false, instance: 2);
+        Advance(1.5);
+        Expect("G19 뒤 줄은 창 장벽이 유지돼 기다린다");
+        Sig(ScreenSignal.Window, false);
+        Advance(0.001);
+        Expect("G19 창 종료 뒤 뒤 줄", "after");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("G20 원래 PK", "pk");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        OverlaySchedule.Line("card", LineKind.Card, 2, 0);
+        OverlaySchedule.Line("ctr", Pk, 3, 0, 1);
+        Advance(5.0);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.001);
+        Expect("G20 앞에 보이는 줄이 있으면 이번 규칙으로 당기지 않는다");
+        Sig(ScreenSignal.Window, false);
+        Advance(0.001);
+        Expect("G20 창 종료 뒤 기존대로", "card", "ctr");
+
         // 측정 4 일곱째 판: 타격 없는 캐릭터의 PK가 장부에 남아 뒤 PK 타격을 계속 소비했다.
         void WeakWindow()
         {
