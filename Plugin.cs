@@ -125,6 +125,10 @@ public class Plugin : BasePlugin
             "Diagnostics", "TraceTiming", false,
             "화면 지연을 재기 위한 기록(수신 프레임 헤더, PK 진행, 표시 시각)을 BepInEx 로그에 남긴다. " +
             "켜면 F10으로 \"지금 화면에서 본 장면\"의 시각을 남길 수 있다. 측정이 끝나면 false로 둘 것.");
+        ConfigEntry<bool> screenProbe = Config.Bind(
+            "Diagnostics", "ScreenProbe", false,
+            "화면 신호 후보를 찾기 위해 모든 GameObject 활성 전환(경로·시각)을 BepInEx 로그에 남긴다. " +
+            "TraceTiming과 같이 켜면 패킷 수신 시각과 대조할 수 있다. 부하가 크므로 측정이 끝나면 false로 둘 것.");
 
         if (showOverlay.Value)
         {
@@ -157,8 +161,11 @@ public class Plugin : BasePlugin
             // 오버레이를 꺼도 씬 감지·이름표 수집에 필요하다.
             _harmony.PatchAll(typeof(FramePump));
             Log.LogInfo("Socket patches applied. Waiting for battle traffic.");
-            if (OverlaySchedule.UsesScreenSignals
-                && !ScreenProbe.Init(Log, _harmony, OverlaySchedule.Screen, OverlaySchedule.FallBackToModel))
+            bool gating = OverlaySchedule.UsesScreenSignals;
+            if ((gating || screenProbe.Value)
+                && !ScreenProbe.Init(Log, _harmony, gating ? OverlaySchedule.Screen : null,
+                                     gating ? OverlaySchedule.FallBackToModel : null, screenProbe.Value)
+                && gating)
             {
                 OverlaySchedule.FallBackToModel();
                 Log.LogWarning("Screen signal hook failed; overlay falls back to estimated timing.");
