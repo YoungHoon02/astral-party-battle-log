@@ -511,12 +511,12 @@ static class Sched
         Advance(10.0);
         Sig(ScreenSignal.Window, false);
         Advance(0.001);
-        Expect("G8 결과 수신 뒤 10초 유지된 타격 없는 창은 공개하지 않는다");
+        Expect("G8 결과 수신 뒤 10초 유지된 타격 없는 창은 꺼질 때 공개", "pk");
         OverlaySchedule.Line("d", Dice, 2, 5, 5);
         Advance(0.5);
         Sig(ScreenSignal.DiceFace, false, 5);
         Advance(0.001);
-        Expect("G8 뒤 사건의 신호에 늦게 공개", "pk", "d");
+        Expect("G8 뒤 주사위는 제 신호에", "d");
 
         Setup(log, signals: true);
         OverlaySchedule.Line("pk", Pk, 1, 0, 0);
@@ -724,24 +724,30 @@ static class Sched
         Setup(log, signals: true);
         OverlaySchedule.Line("p1", Pk, 1, 0, 0);
         OverlaySchedule.Line("p2", Pk, 2, 0, 0);
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Expect("W1 타격 없는 창이 열려 있는 동안은 공개하지 않는다");
+        Sig(ScreenSignal.Window, false);
+        Advance(0.001);
+        Expect("W1 창 꺼짐에 가장 오래된 PK 하나만 공개", "p1");
         WeakWindow();
-        WeakWindow();
-        Expect("W1 타격 없는 창 2개는 결과를 공개하지 않는다");
+        Expect("W1 연속 둘째 약한 창에 다음 PK", "p2");
         OverlaySchedule.Line("d", Dice, 3, 3, 3);
         Advance(0.5);
         Sig(ScreenSignal.DiceFace, false, 3);
         Advance(0.001);
-        Expect("W1 뒤 주사위 신호에 늦게 공개", "p1", "p2", "d");
+        Expect("W1 뒤 주사위는 제 신호에", "d");
         OverlaySchedule.Line("p3", Pk, 4, 0, 0);
         HitWindow(1);
-        Expect("W1 약한 창에 정산된 결과는 장부가 없어 다음 PK 타격이 바로 공개", "p3");
+        Expect("W1 약한 창에 공개된 결과는 장부가 없어 다음 PK 타격이 바로 공개", "p3");
 
         Setup(log, signals: true);
         OverlaySchedule.Line("p1", Pk, 1, 0, 0);
         OverlaySchedule.Line("p2", Pk, 2, 0, 0);
         WeakWindow();
+        Expect("W2 약한 창 꺼짐에 앞 PK", "p1");
         HitWindow(1);
-        Expect("W2 타격은 약한 창에 정산된 결과를 건너뛰어 다음 PK에 (앞 결과는 늦은 경로)", "p1", "p2");
+        Expect("W2 다음 창의 타격은 다음 PK에", "p2");
         Sig(ScreenSignal.Window, false);
         OverlaySchedule.Line("p3", Pk, 3, 0, 0);
         HitWindow(2);
@@ -784,6 +790,65 @@ static class Sched
         OverlaySchedule.Line("pk", Pk, 2, 0, 0);
         HitWindow(1);
         Expect("W6 약한 창은 반격 결과를 정산하지 않는다 — 원래 PK 후보에서도 빠진다", "ctr", "pk");
+
+        // 측정 4 여덟째 판: 타격 없는 파파라 PK가 창 꺼짐 뒤 다음 주사위 신호까지 +8.2초 늦었다.
+        Setup(log, signals: true);
+        OverlaySchedule.Line("card", LineKind.Card, 1, 0, 0);
+        OverlaySchedule.Line("eff", LineKind.Effect, 2, 0, 0);
+        OverlaySchedule.Line("pk", Pk, 3, 0, 0);
+        OverlaySchedule.Line("dmg", LineKind.Hit, 3, 0);
+        OverlaySchedule.Line("after", LineKind.Effect, 4, 0, 0);
+        Advance(0.1);
+        Expect("W7 카드", "card");
+        Sig(ScreenSignal.Window, true);
+        Advance(1.0);
+        Expect("W7 창이 열린 동안 앞 일반 줄은 모델 대기, PK·뒤 줄은 대기");
+        Sig(ScreenSignal.Window, false);
+        Advance(0.001);
+        Expect("W7 창 꺼짐에 앞 일반 줄 → PK·피해 → 뒤 줄 순서로", "eff", "pk", "dmg", "after");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("m", Dice, 1, 3, 0);
+        OverlaySchedule.Line("pk", Pk, 2, 0, 0);
+        OverlaySchedule.Line("card", LineKind.Card, 3, 0, 0);
+        OverlaySchedule.Line("eff", LineKind.Effect, 4, 0, 0);
+        WeakWindow();
+        Expect("W8 앞 신호 대기 줄은 늦은 경로로 함께, 뒤 줄은 창 꺼짐부터 예약", "m", "pk", "card");
+        Advance(2.8);
+        Expect("W8 그다음 줄은 카드 연출 2.87초를 기다린다 (꺼짐+2.8)");
+        Advance(0.1);
+        Expect("W8 꺼짐+2.9", "eff");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        HitWindow(1);
+        Expect("W9 타격으로 공개", "pk");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Sig(ScreenSignal.Window, false);
+        WeakWindow();
+        Expect("W9 이미 공개된 결과는 약한 창이 다시 내보내지 않는다(weak-orphan)");
+        OverlaySchedule.Line("p1", Pk, 2, 0, 0);
+        OverlaySchedule.Line("d", Dice, 3, 4, 4);
+        Advance(0.5);
+        Sig(ScreenSignal.DiceFace, false, 4);
+        Advance(0.001);
+        Expect("W9 늦은 경로로 공개(장부 등록)", "p1", "d");
+        WeakWindow();
+        Expect("W9 약한 창은 장부 항목만 정산하고 아무것도 내보내지 않는다");
+        OverlaySchedule.Line("p2", Pk, 4, 0, 0);
+        HitWindow(2);
+        Expect("W9 다음 PK는 제 타격에", "p2");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("pk", Pk, 1, 0, 0);
+        OverlaySchedule.Line("ctr", Pk, 2, 0, 1);
+        WeakWindow();
+        Expect("W10 약한 창은 원래 PK만 공개하고 반격은 남긴다", "pk");
+        WeakWindow();
+        Expect("W10 반격은 별도 약한 창의 결과로 취급하지 않는다");
+        OverlaySchedule.Line("pk2", Pk, 3, 0, 0);
+        HitWindow(1);
+        Expect("W10 다음 PK 타격에 반격은 늦은 경로로 함께", "ctr", "pk2");
 
         Setup(log, signals: true);
         OverlaySchedule.Line("d", Dice, 1, 3, 3);
