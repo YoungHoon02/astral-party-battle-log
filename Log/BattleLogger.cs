@@ -19,7 +19,7 @@ internal sealed class BattleLogger
     private readonly bool _logCards;
 
     // 마지막 값은 주사위 줄이면 캐릭터 주사위 눈을 두 자리씩 담은 값("5+2" → 205, 모르면 0),
-    // PK 줄이면 반격 여부(1/0)다. 화면 신호 짝짓기용(docs/SIGNAL-GATING.md).
+    // PK 줄이면 반격 여부(1/0), 차례 시작 줄이면 차례 배너가 뜨지 않는지(1/0)다. 화면 신호 짝짓기용(docs/SIGNAL-GATING.md).
     public Action<string, LineKind, long, int, int>? Mirror;
     public Action<LineKind, long, int>? MirrorAdvance;
     public Action<int, long>? MirrorNewPage;
@@ -332,6 +332,8 @@ internal sealed class BattleLogger
         if (die != 0) note.Append(" [기절]");
         if (hospital != 0) note.Append(" [회복]");
         if (stop != 0) note.Append(" [턴중단]");
+        // 회복 중인 차례는 게임이 차례 배너 대신 생각 중 팁을 띄운다. 화면 신호 짝짓기에서 뺀다.
+        _detail = hospital != 0 ? 1 : 0;
         Emit($"· {_roster.Name(pid)} 행동 시작{note}");
     }
 

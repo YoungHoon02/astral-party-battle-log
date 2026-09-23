@@ -34,6 +34,7 @@ internal static class FramePump
             {
                 _scene = scene;
                 ScreenProbe.OnScene(scene);
+                OverlaySchedule.ForgetBanner();
                 OnSceneChanged?.Invoke(scene);
             }
         }

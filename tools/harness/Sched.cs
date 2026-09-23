@@ -33,10 +33,27 @@ static class Sched
     static void Sig(ScreenSignal kind, bool on, int pip = 0, int instance = 0) =>
         OverlaySchedule.Screen(kind, pip, on, (IntPtr)instance);
 
+    // 게임은 차례 배너를 2초 띄운다. 두 번 보여 주면 인스턴스 7을 배너로 배운다.
+    static void LearnBanner()
+    {
+        for (int i = 0; i < 2; i++)
+        {
+            Sig(ScreenSignal.TopTip, true, instance: 7);
+            Sig(ScreenSignal.TopTip, true, instance: 8);
+            Advance(0.4);
+            Sig(ScreenSignal.TopTip, false, instance: 8);
+            Advance(1.6);
+            Sig(ScreenSignal.TopTip, false, instance: 7);
+            Advance(0.1);
+        }
+        Out.Clear();
+    }
+
     static void Setup(ManualLogSource log, bool enabled = true, int maxLagMs = 60000, bool signals = false)
     {
         OverlaySchedule.Init(log, enabled, maxLagMs, false);
         OverlaySchedule.Discard();
+        OverlaySchedule.ForgetBanner();
         if (!signals) OverlaySchedule.FallBackToModel();
         Advance(0.001);
         Out.Clear();
@@ -940,6 +957,46 @@ static class Sched
         OverlaySchedule.Page(1, 1);
         Advance(0.001);
         Expect("RT4 1라운드 페이지는 신호를 기다리지 않는다", "<page 1>");
+
+        // 이동만 한 몬스터 주사위(눈 없음)가 다음 차례 시작 줄까지 붙잡던 문제. 배너 인스턴스 7, 생각 중 팁 8.
+        Setup(log, signals: true);
+        OverlaySchedule.Line("t0", LineKind.Turn, 1, 0, 0);
+        Advance(0.001);
+        Expect("TB1 배너를 배우기 전의 차례 줄은 지금처럼 추정으로 낸다", "t0");
+        LearnBanner();
+        OverlaySchedule.Line("m", Dice, 2, 3, 0);
+        OverlaySchedule.Line("t1", LineKind.Turn, 3, 0, 0);
+        OverlaySchedule.Line("d", Dice, 4, 3, 5);
+        Advance(10.0);
+        Expect("TB1 배너 전에는 몬스터 주사위도 다음 차례 줄도 기다린다");
+        Sig(ScreenSignal.TopTip, true, instance: 8);
+        Advance(0.001);
+        Expect("TB2 같은 이름의 생각 중 팁은 신호가 아니다");
+        Sig(ScreenSignal.TopTip, true, instance: 7);
+        Advance(0.001);
+        Expect("TB3 배너가 켜지면 앞 몬스터 주사위를 먼저 내고 차례 줄을 낸다", "m", "t1");
+        Sig(ScreenSignal.TopTip, false, instance: 7);
+        Sig(ScreenSignal.DiceFace, false, 5);
+        Advance(0.001);
+        Expect("TB3 뒤 캐릭터 주사위는 자기 신호로", "d");
+
+        Setup(log, signals: true);
+        LearnBanner();
+        OverlaySchedule.Line("h", LineKind.Turn, 1, 0, 1);
+        Advance(0.001);
+        Expect("TB4 회복 중 차례는 배너가 없어 기다리지 않는다", "h");
+
+        Setup(log, signals: true);
+        for (int i = 0; i < 2; i++)
+        {
+            Sig(ScreenSignal.TopTip, true, instance: 8);
+            Advance(0.7);
+            Sig(ScreenSignal.TopTip, false, instance: 8);
+            Advance(0.1);
+        }
+        OverlaySchedule.Line("t", LineKind.Turn, 1, 0, 0);
+        Advance(0.001);
+        Expect("TB5 2초가 아닌 팁으로는 배너를 배우지 않는다", "t");
 
         RunLoggerTags(log);
 

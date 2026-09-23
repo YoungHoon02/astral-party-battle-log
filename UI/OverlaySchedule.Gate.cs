@@ -5,12 +5,12 @@ using AstralPartyBattleLog.Log;
 
 namespace AstralPartyBattleLog.UI;
 
-public enum ScreenSignal { DiceFace, Window, Hit, RoundTip }
+public enum ScreenSignal { DiceFace, Window, Hit, RoundTip, TopTip }
 
 // 주사위·PK 결과 줄을 화면 신호로 공개한다. 규칙과 근거는 docs/SIGNAL-GATING.md.
 internal static partial class OverlaySchedule
 {
-    private enum Gate { None, Dice, Pk, Round }
+    private enum Gate { None, Dice, Pk, Round, Turn }
     private enum Resolution { None, Signal, Late, Cap }
 
     private sealed class Entry
@@ -64,6 +64,10 @@ internal static partial class OverlaySchedule
     private const long GateCapUs = 60_000_000;
     // 주사위 연출 2.70초 − 관측 최소 굴림 1.14초. 결과가 보인 뒤 이동이 끝나기까지.
     private const long DiceTailUs = 1_560_000;
+    // 차례 배너는 게임이 2초 띄운다. 같은 이름의 생각 중 팁과 가르는 기준이다.
+    private const long BannerUs = 2_000_000;
+    private const long BannerToleranceUs = 150_000;
+    private const int BannerVotes = 2;
 
     private static bool _gating;
     private static long _anchorUs = long.MinValue;
@@ -76,6 +80,11 @@ internal static partial class OverlaySchedule
     private static Window? _window;
     private static Window? _barrier;
     private static long _barrierCapUs;
+
+    // 위쪽 팁 오브젝트 두 개(차례 배너·생각 중 팁)는 이름이 같다. 2초 떠 있다 꺼진 쪽을 배너로 학습한다.
+    private static readonly Dictionary<IntPtr, long> TopOnUs = new();
+    private static readonly Dictionary<IntPtr, int> TopVotes = new();
+    private static IntPtr _banner;
 
     public static bool UsesScreenSignals => _gating;
 
@@ -113,6 +122,14 @@ internal static partial class OverlaySchedule
         _window = null;
         _barrier = null;
         _anchorUs = long.MinValue;
+    }
+
+    // 오브젝트 포인터는 씬이 바뀌면 재사용될 수 있다. 판 세대가 아니라 씬에 묶는다.
+    public static void ForgetBanner()
+    {
+        TopOnUs.Clear();
+        TopVotes.Clear();
+        _banner = IntPtr.Zero;
     }
 
     private static void PumpGated(long now, Action<string> line, Action<int> page, Action clear)
@@ -189,6 +206,12 @@ internal static partial class OverlaySchedule
             return e;
         }
         if (item.Signal != Signal.Line) return e;
+        // 배너를 학습하기 전에는 기다릴 신호가 없으므로 지금처럼 추정으로 낸다.
+        if (item.Kind == LineKind.Turn && _banner != IntPtr.Zero && item.Detail == 0)
+        {
+            e.Gate = Gate.Turn;
+            return e;
+        }
         if (item.Kind == LineKind.Dice)
         {
             e.Gate = Gate.Dice;
@@ -273,7 +296,7 @@ internal static partial class OverlaySchedule
             Anchor(now);
             return;
         }
-        if (head.Gate == Gate.Round)
+        if (head.Gate is Gate.Round or Gate.Turn)
         {
             Anchor(head.ResolvedUs, seen: true);
             return;
@@ -310,6 +333,9 @@ internal static partial class OverlaySchedule
                 break;
             case ScreenSignal.RoundTip:
                 if (s.On) MatchRound(s.AtUs);
+                break;
+            case ScreenSignal.TopTip:
+                TopTip(s);
                 break;
             case ScreenSignal.Hit:
                 if (!s.On)
@@ -385,6 +411,48 @@ internal static partial class OverlaySchedule
         _barrier = null;
         ResolveOlder(page.Seq, atUs);
         Resolve(page, Resolution.Signal, atUs);
+    }
+
+    private static void TopTip(PendingSignal s)
+    {
+        if (s.On)
+        {
+            TopOnUs[s.Instance] = s.AtUs;
+            if (s.Instance == _banner) MatchTurn(s.AtUs);
+            return;
+        }
+        if (!TopOnUs.Remove(s.Instance, out long onUs) || _banner != IntPtr.Zero) return;
+        // 게임 대기가 배속을 따르는지 확인하지 못해 실시간·배속 보정 길이 둘 다 받는다.
+        long shown = s.AtUs - onUs;
+        float speed = Volatile.Read(ref _speed);
+        if (Math.Abs(shown - BannerUs) > BannerToleranceUs
+            && Math.Abs((long)(shown * speed) - BannerUs) > BannerToleranceUs) return;
+        int votes = TopVotes[s.Instance] = TopVotes.GetValueOrDefault(s.Instance) + 1;
+        if (votes < BannerVotes) return;
+        foreach (KeyValuePair<IntPtr, int> other in TopVotes)
+            if (other.Key != s.Instance && other.Value >= votes) return;
+        _banner = s.Instance;
+        GateTrace("banner learned");
+    }
+
+    // 차례 시작 줄은 수신 순서대로 배너 하나씩 대응한다. 앞 대기 줄(이동만 한 몬스터 주사위 등)은 늦은 경로로 푼다.
+    private static void MatchTurn(long atUs)
+    {
+        Entry? turn = null;
+        foreach (Entry e in Queue)
+            if (e.Gate == Gate.Turn && e.Res == Resolution.None)
+            {
+                if (e.Item.ReceivedUs < atUs) turn = e;
+                break;
+            }
+        if (turn is null)
+        {
+            GateTrace("stray kind=turn");
+            return;
+        }
+        _barrier = null;
+        ResolveOlder(turn.Seq, atUs);
+        Resolve(turn, Resolution.Signal, atUs);
     }
 
     private static void Strike(long atUs)
@@ -505,7 +573,7 @@ internal static partial class OverlaySchedule
         }
         // 눈을 모르는 주사위는 올 신호가 없어 장부에 올릴 것도 없다. 라운드 팁은 뒤에 받은 페이지와만 짝지어져
         // 늦게 와도 다른 줄을 먼저 풀지 않는다.
-        if (e.Gate == Gate.Dice && e.Pips.Count == 0 || e.Gate == Gate.Round) return;
+        if (e.Gate == Gate.Dice && e.Pips.Count == 0 || e.Gate is Gate.Round or Gate.Turn) return;
         // 자기 신호 없이 공개한 줄은 모두 장부에 올린다. 그 신호가 늦게 오면 다음 줄 대신 여기서 소비된다.
         Unconsumed.Add(new Ledger
         {
