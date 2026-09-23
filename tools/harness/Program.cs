@@ -455,6 +455,18 @@ class Program
         if (!t1) fails++;
         if (!t2) fails++;
 
+        Console.WriteLine("=== 라운드 시작 직후의 주인 없는 효과 ===");
+        var owner = new List<string>();
+        var ro = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames);
+        ro.Mirror = (s, k, g, u, _) => owner.Add(Palette.Strip(s).Trim());
+        ro.OnFrame(new FrameHeader(Op.RoundStart, 0, 0, 0), Frame.Cat(Frame.Fix32(1, 1), Frame.Fix64(5, 700)));
+        ro.OnFrame(new FrameHeader(Op.LandBuffs, 0, 0, 0), Frame.Msg(1, Frame.Cat(
+            Frame.Fix32(1, 12), Frame.Msg(2, Frame.Msg(1, Frame.Msg(2, Frame.Cat(Frame.Fix64(1, 55), Frame.Fix32(2, 9))))))));
+        bool rs1 = !owner.Exists(l => l.Contains("스킬 사용"));
+        Console.WriteLine($"  {(rs1 ? "OK  " : "FAIL")} RS1 라운드 시작 패킷의 받는 사람을 차례 주인으로 보지 않는다: [{string.Join(" / ", owner)}]");
+        Console.WriteLine();
+        if (!rs1) fails++;
+
         fails += Sched.Run();
 
         Console.WriteLine();

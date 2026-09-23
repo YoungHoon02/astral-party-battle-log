@@ -285,16 +285,17 @@ internal sealed class BattleLogger
     private void DecodeRoundStart(byte[] body)
     {
         var r = new ProtoReader(body, 0, body.Length);
-        long round = 0, playerId = 0;
+        long round = 0;
         while (r.NextField(out int field, out int wire))
         {
             if (!IsNumber(wire)) { if (!r.Skip(wire)) break; continue; }
             if (!r.TryReadNumber(wire, out long v)) break;
             if (field == 1) round = v;
-            else if (field == 5) playerId = v;
         }
         _round = (int)round;
-        if (playerId != 0) _turnOwner = playerId;
+        // 필드 5(PlayerId)는 받는 사람 자신이다(BattleLogic.OnRoundStartS2C가 자기 id와 비교한다). 차례 주인으로 쓰면
+        // 첫 차례 전의 주인 없는 효과가 모두 본인 것으로 찍힌다.
+        _turnOwner = 0;
         _saidSkillUse = 0;
         _cardSubmits.Clear();
         NewPage();
