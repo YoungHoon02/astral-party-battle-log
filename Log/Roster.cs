@@ -127,15 +127,11 @@ internal sealed class Roster
     private bool AddPlayer(ProtoReader r, bool isMonster)
     {
         long id = 0, slot = 0, isBot = 0, heroId = 0;
-        string nick = "";
 
+        // Nick(2)은 계정 닉네임이라 읽지 않는다. 표시명·캐시로 새는 경로를 코드에서 없앤다.
         while (r.NextField(out int field, out int wire))
         {
-            if (field == 2 && wire == ProtoReader.WireLength)
-            {
-                if (!r.TryReadString(out nick)) break;
-            }
-            else if (field == 10 && wire == ProtoReader.WireLength)
+            if (field == 10 && wire == ProtoReader.WireLength)
             {
                 // Hero는 손패(Cards, 8)도 품고 있다. HeroId(2) 말고는 읽지 말 것.
                 if (!r.TryReadMessage(out var hero)) break;
@@ -168,16 +164,18 @@ internal sealed class Roster
         bool wasPlayer = _entries.TryGetValue(id, out Entry? existing) && !existing.IsMonster;
         if (wasPlayer) isMonster = false;
 
-        string kind = (isMonster ? _table.Lookup("monster", heroId) : _table.Lookup("character", heroId))
-                      ?? _table.Lookup(isMonster ? "character" : "monster", heroId)
-                      ?? (nick.Length > 0 ? nick : isMonster ? "몹" : $"{slot + 1}P");
+        string? named = (isMonster ? _table.Lookup("monster", heroId) : _table.Lookup("character", heroId))
+                        ?? _table.Lookup(isMonster ? "character" : "monster", heroId);
+        string kind = named ?? (isMonster ? "몹" : $"{slot + 1}P");
 
-        if (existing is not null && existing.Kind == kind && existing.IsMonster == isMonster) return false;
+        if (existing is not null && existing.Kind == kind && existing.IsMonster == isMonster
+            && existing.HeroId == heroId) return false;
 
         if (existing is not null) Release(existing.IsMonster, existing.Kind);
         var row = new RosterCache.Row(kind, isMonster, isMonster ? -1 : (int)slot, heroId);
         Register(id, row);
-        Cache?.Put(id, row);
+        // 자리표시자는 캐시에 남기지 않는다. 캐시에는 이름표에서 온 이름만 들어간다.
+        if (named is not null) Cache?.Put(id, row);
         LastChanged.Add(id);
         return true;
     }
@@ -202,13 +200,15 @@ internal sealed class Roster
         else _kindCount[bucket] = count - 1;
     }
 
+    // 캐시는 안 본다 — 방이 아직 확정되지 않았을 때는 지난 방의 캐시일 수 있고, 대기열이
+    // 기다리는 건 이번 판 등록이다. 캐시 이름은 어차피 Name()에서 대기열과 무관하게 되살아난다.
     public bool Knows(long id) => _entries.ContainsKey(id);
 
     public bool IsCharacter(long id) => _entries.TryGetValue(id, out Entry? e) && !e.IsMonster;
 
     public bool IsEmpty => _entries.Count == 0;
 
-    // false면 표시명이 아직 계정 닉네임이나 `2P` 같은 자리표시자다. 계정 정보가 로그에 새지 않게 거른다.
+    // false면 캐릭터 선택 전 명단이다. 같은 사람이 자리표시자와 캐릭터 이름으로 두 번 찍히지 않게 거른다.
     public bool HasHero(long id) =>
         _entries.TryGetValue(id, out Entry? e) && e.HeroId != 0;
 
