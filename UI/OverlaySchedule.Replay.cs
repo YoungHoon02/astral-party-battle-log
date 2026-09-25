@@ -13,7 +13,7 @@ namespace AstralPartyBattleLog.UI;
 internal static partial class OverlaySchedule
 {
     // 결정 로직(게이트·모델·장부·장벽·상한)을 바꾸면 올린다. 재생기는 모르는 버전을 거부한다.
-    public const int SchedulerVersion = 1;
+    public const int SchedulerVersion = 2;
     public const int ReplayFormat = 1;
     private const long Null = ReplayRecord.Null;
     private const int MaxInstances = 65536;

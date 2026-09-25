@@ -862,11 +862,67 @@ static class Sched
         OverlaySchedule.Line("ctr", Pk, 2, 0, 1);
         WeakWindow();
         Expect("W10 약한 창은 원래 PK만 공개하고 반격은 남긴다", "pk");
-        WeakWindow();
-        Expect("W10 반격은 별도 약한 창의 결과로 취급하지 않는다");
+        Sig(ScreenSignal.Window, true);
+        Advance(3.0);
+        Expect("W10 반격은 별도 약한 창의 결과가 아니다 — 다음 창이 열리면 화면이 지난 것이라 늦은 경로로 낸다", "ctr");
+        Sig(ScreenSignal.Window, false);
+        Advance(0.001);
+        Expect("W10 그 창이 닫혀도 더 낼 것이 없다");
         OverlaySchedule.Line("pk2", Pk, 3, 0, 0);
         HitWindow(1);
-        Expect("W10 다음 PK 타격에 반격은 늦은 경로로 함께", "ctr", "pk2");
+        Expect("W10 다음 PK는 제 타격에", "pk2");
+
+        // 2026-09-26 재생 기록: 신호 없는 몬스터 주사위가 몬스터와 부딪힌 PK의 타격까지 붙잡혀, 본인 카드 선택
+        // 동안 +26초 늦었다. PK 창이 열리면 창보다 먼저 받은 앞 사건은 화면을 지났다.
+        Setup(log, signals: true);
+        OverlaySchedule.Line("m", Dice, 1, 10, 0);
+        OverlaySchedule.Line("after", LineKind.Effect, 2, 0, 0);
+        Advance(5.0);
+        Expect("PS1 몬스터 주사위는 신호가 없어 기다린다");
+        Sig(ScreenSignal.Window, true);
+        Advance(0.001);
+        Expect("PS1 PK 창이 열리면 결과가 아직 없어도 앞 몬스터 주사위를 늦은 경로로 낸다", "m", "after");
+        Advance(20.0);
+        OverlaySchedule.Line("pk", Pk, 3, 0, 0);
+        OverlaySchedule.Line("dmg", LineKind.Hit, 3, 0);
+        Advance(1.0);
+        Expect("PS1 창보다 늦게 받은 PK 결과는 타격 전에는 내지 않는다");
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("PS1 PK는 제 타격에", "pk", "dmg");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("m", Dice, 1, 7, 0);
+        OverlaySchedule.Line("pk", Pk, 2, 0, 0);
+        OverlaySchedule.Line("d", Dice, 3, 4, 4);
+        Advance(3.0);
+        Sig(ScreenSignal.Window, true);
+        Advance(0.001);
+        Expect("PS2 창 전에 받은 PK가 있으면 그 PK 앞 줄만 내고 PK와 그 뒤 주사위는 남긴다", "m");
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.001);
+        Expect("PS2 PK는 제 타격에", "pk");
+        Sig(ScreenSignal.DiceFace, false, 4);
+        Advance(0.001);
+        Expect("PS2 뒤 주사위는 제 신호에", "d");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("old", Pk, 1, 0, 0);
+        Advance(60.1);
+        Expect("PS3 상한 공개(장부 등록)", "old");
+        OverlaySchedule.Line("m", Dice, 2, 5, 0);
+        Advance(1.0);
+        Sig(ScreenSignal.Window, true);
+        Advance(0.001);
+        Expect("PS3 장부에 PK가 있으면 이 창이 그 PK 것일 수 있어 앞 줄을 풀지 않는다");
+
+        Setup(log, signals: true);
+        OverlaySchedule.Line("m1", Dice, 1, 5, 0);
+        Advance(1.0);
+        Sig(ScreenSignal.Window, true);
+        OverlaySchedule.Line("m2", Dice, 2, 5, 0);
+        Advance(0.001);
+        Expect("PS4 창보다 늦게 받은 줄은 그 PK 뒤 사건일 수 있어 풀지 않는다", "m1");
 
         Setup(log, signals: true);
         OverlaySchedule.Line("d", Dice, 1, 3, 3);

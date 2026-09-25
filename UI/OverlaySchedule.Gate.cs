@@ -402,6 +402,7 @@ internal static partial class OverlaySchedule
                 {
                     CloseWindow(s.AtUs);
                     _window = new Window { StartUs = s.AtUs };
+                    PkStarted(s.AtUs);
                 }
                 else CloseWindow(s.AtUs);
                 break;
@@ -420,6 +421,21 @@ internal static partial class OverlaySchedule
                 // 연타는 인스턴스가 겹쳐 켜지고 반격은 앞 인스턴스가 모두 꺼진 뒤 켜진다(설계 전제 4).
                 if (ActiveHits.Add(s.Instance) && ActiveHits.Count == 1) Strike(s.AtUs);
                 break;
+        }
+    }
+
+    // PK 창이 열렸으면 화면이 PK 시작에 왔으므로 그보다 먼저 받은 사건은 지났다(설계 전제 1). 신호가 없는 몬스터
+    // 주사위가 몬스터와 부딪힌 PK의 타격까지 붙잡혀, 본인 카드 선택 동안 +26초 늦었다(2026-09-26 재생 기록).
+    // 창의 PK는 결과가 창보다 늦게 올 수 있어(전제 5) 풀지 않는다. 장부에 PK가 있으면 이 창이 그 PK 것일 수 있어
+    // 손대지 않는다. 창보다 늦게 받은 줄은 이 PK 뒤 사건일 수 있어 풀지 않는다.
+    private static void PkStarted(long atUs)
+    {
+        (Entry? pk, Ledger? owed) = OldestPk(afterSeq: -1, long.MaxValue, originalOnly: true);
+        if (owed is not null) return;
+        foreach (Entry e in Queue)
+        {
+            if (pk is not null && e.Seq >= pk.Seq || e.Item.ReceivedUs >= atUs) break;
+            if (e.Gate != Gate.None && e.Res == Resolution.None) Resolve(e, Resolution.Late, atUs, Why.LaterSignal);
         }
     }
 
