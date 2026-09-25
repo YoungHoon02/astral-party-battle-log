@@ -90,7 +90,18 @@ internal sealed class BattleLogger
 
     private readonly HashSet<long> _msgTargets = new();
 
-    private (byte[] Body, long Group, LineKind Kind, int Units, long BattleGroup)? _deferred;
+    private readonly Queue<(byte[] Body, long Group, LineKind Kind, int Units, long BattleGroup, long Frame, DateTime At)>
+        _deferred = new();
+    // 판이 바뀌어도 Reset에서 일부러 안 비운다 — 큐도 함께 비워지므로 값 자체는 무의미해지고,
+    // 계속 늘기만 해야 다음 판 첫 항목의 "프레임 0 경과"와 헷갈리지 않는다.
+    private long _frameSeq;
+
+    // 기한 근거는 docs/ARCHITECTURE.md "플레이어 이름". 등록은 같은 묶음 안에 따라오므로 짧게 둔다 —
+    // 길수록 뒤 프레임의 줄이 앞질러 나오고, 붙들린 줄은 바뀐 차례 문맥으로 풀린다.
+    internal const int DeferFrames = 8;
+    internal static readonly TimeSpan DeferWindow = TimeSpan.FromMilliseconds(300);
+    private const int DeferCapacity = 16;
+
     private string? _saidCardName;
 
     private static readonly Dictionary<int, (long BuffId, string Fallback)> Stacks = new()
@@ -142,7 +153,9 @@ internal sealed class BattleLogger
 
         if (_goldHold is { } waiting && DateTime.UtcNow - waiting.At > GoldPairWindow) FlushGold();
 
-        if (_deferred is { } deferred && cmdId != Op.MonsterRefresh) FlushDeferred(deferred);
+        bool updatesRoster = cmdId is Op.MonsterRefresh or Op.RunningGame or Op.StartGame;
+        if (cmdId != Op.MonsterRefresh) _frameSeq++;
+        if (!updatesRoster) DrainDeferred();
 
         _group = ++_groupSeq;
         _kind = KindOf(cmdId);
@@ -233,7 +246,7 @@ internal sealed class BattleLogger
             case Op.UpdateHeroAttr:
                 if (HasUnknownTarget(body))
                 {
-                    _deferred = (body, _group, _kind, _units, _battleGroup);
+                    Defer(body);
                     break;
                 }
                 DecodeUpdateHeroAttr(new ProtoReader(body, 0, body.Length));
@@ -243,11 +256,36 @@ internal sealed class BattleLogger
             case Op.ThrowDice: DecodeThrowDice(body); break;
             case Op.MoveAgain: DecodeMoveAgain(body); break;
         }
+
+        if (updatesRoster) DrainDeferred();
     }
 
-    private void FlushDeferred((byte[] Body, long Group, LineKind Kind, int Units, long BattleGroup) d)
+    private void Defer(byte[] body)
     {
-        _deferred = null;
+        if (_deferred.Count >= DeferCapacity)
+        {
+            _deferred.Dequeue();
+            Diag("[game] deferred UpdateHeroAttr queue full, dropped 1");
+        }
+        _deferred.Enqueue((body, _group, _kind, _units, _battleGroup, _frameSeq, DateTime.UtcNow));
+    }
+
+    // 앞 항목이 풀려야 뒤 항목도 나간다. 기한은 도착 순서대로 단조라 앞이 안 끝났으면 뒤도 안 끝났다.
+    private void DrainDeferred()
+    {
+        DateTime now = DateTime.UtcNow;
+        while (_deferred.Count > 0)
+        {
+            var d = _deferred.Peek();
+            bool waiting = _frameSeq - d.Frame < DeferFrames && now - d.At < DeferWindow;
+            if (waiting && HasUnknownTarget(d.Body)) break;
+            _deferred.Dequeue();
+            FlushDeferred(d);
+        }
+    }
+
+    private void FlushDeferred((byte[] Body, long Group, LineKind Kind, int Units, long BattleGroup, long Frame, DateTime At) d)
+    {
         (long group, LineKind kind, int units, bool fromCause, long battleGroup) =
             (_group, _kind, _units, _kindFromCause, _battleGroup);
         (_group, _kind, _units, _kindFromCause, _battleGroup) = (d.Group, d.Kind, d.Units, true, d.BattleGroup);
@@ -1415,7 +1453,11 @@ internal sealed class BattleLogger
         _finishPending = false;
         _msgTargets.Clear();
         _saidCardName = null;
-        _deferred = null;
+        if (_deferred.Count > 0)
+        {
+            Diag($"[game] dropped {_deferred.Count} deferred UpdateHeroAttr on reset");
+            _deferred.Clear();
+        }
         _saidSource = -1;
         _saidId = 0;
         _saidActor = 0;

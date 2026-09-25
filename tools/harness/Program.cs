@@ -69,7 +69,9 @@ class Program
         string dir = Path.GetTempPath() + "apbl-h";
         Directory.CreateDirectory(dir);
         string namesPath = Path.Combine(dir, "names.tsv");
-        File.WriteAllText(namesPath, "skill\t777\t훔치기\ncard\t42\t폭탄\nbuff\t4200\t폭탄\nbuff\t4300\t광폭\nbuff\t10006\t【표식】\n", new System.Text.UTF8Encoding(false));
+        File.WriteAllText(namesPath, "skill\t777\t훔치기\ncard\t42\t폭탄\nbuff\t4200\t폭탄\nbuff\t4300\t광폭\nbuff\t10006\t【표식】\n"
+            + "monster\t3187\t도둑\nmonster\t3190\t타락한 봉황\nmonster\t3191\t마법 찻주전자\n"
+            + "character\t1001\t패니\ncharacter\t1002\t루루\n", new System.Text.UTF8Encoding(false));
         var names = NameTable.Load(namesPath, _ => { });
 
         var log = new ManualLogSource("h");
@@ -323,29 +325,111 @@ class Program
 
         // O. 등록보다 먼저 버프를 받은 새 몬스터 — 등록이 따라오면 이름이 붙는다
         var spawn = new List<string>();
+        var oAll = new List<string>();
         var ol = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
-        ol.Mirror = (s, k, g, u, _) => spawn.Add(Palette.Strip(s).Trim());
-        void Monster(long id, string nick) => ol.OnFrame(new FrameHeader(Op.MonsterRefresh, 0, 0, 0),
-            Frame.Msg(1, Frame.Cat(Frame.Fix64(1, id), Frame.Msg(2, System.Text.Encoding.UTF8.GetBytes(nick)))));
+        ol.Mirror = (s, k, g, u, _) => { string l = Palette.Strip(s).Trim(); spawn.Add(l); oAll.Add(l); };
+        // MonsterRefreshS2C { 1: Player{1:id, 2:nick, 10:Hero{2:heroId}} } — 닉네임은 무시되어야 한다
+        void Monster(long id, long heroId) => ol.OnFrame(new FrameHeader(Op.MonsterRefresh, 0, 0, 0),
+            Frame.Msg(1, Frame.Cat(Frame.Fix64(1, id), Frame.Msg(2, System.Text.Encoding.UTF8.GetBytes("몹닉")),
+                                   Frame.Msg(10, Frame.Fix64(2, heroId)))));
         void Beat() => ol.OnFrame(new FrameHeader(5004, 0, 7, 0), Array.Empty<byte>());
-        Monster(830, "사이크스");
-        ol.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 830), Cause(1, SkillId), SkillEffect(3187, 9300)));
-        Monster(3187, "도둑");
-        bool o1 = spawn.Count == 0;
-        Beat();
-        bool o2 = spawn.Exists(l => l.Contains("→ 도둑")) && !spawn.Exists(l => l.Contains("?3187"));
-        spawn.Clear();
-        ol.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 830), Cause(1, SkillId), SkillEffect(3500, 9301)));
-        Beat();
-        bool o3 = spawn.Exists(l => l.Contains("?3500"));
+        void Hit(long target, long uid) => ol.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0),
+            Frame.Cat(Frame.Fix64(1, 830), Cause(1, SkillId), SkillEffect(target, uid)));
+        int At(string s) => spawn.FindIndex(l => l.Contains(s));
         Console.WriteLine("=== 새로 등장한 몬스터 ===");
+
+        Monster(830, 0);
+        Hit(3187, 9300);
+        bool o1 = spawn.Count == 0;
+        Monster(3187, 3187);
+        bool o2 = At("→ 도둑") >= 0 && At("?3187") < 0;
+        var o2Lines = new List<string>(spawn);
+
+        spawn.Clear();
+        Hit(3190, 9301);
+        Hit(3191, 9302);
+        Monster(3191, 3191);
+        bool o3a = spawn.Count == 0;
+        Monster(3190, 3190);
+        bool o3 = o3a && At("→ 타락한 봉황") >= 0 && At("→ 타락한 봉황") < At("→ 마법 찻주전자");
+        var o3Lines = new List<string>(spawn);
+
+        spawn.Clear();
+        Hit(3500, 9303);
+        for (int i = 1; i < BattleLogger.DeferFrames; i++) Beat();
+        bool o4a = At("?3500") < 0;
+        Beat();
+        bool o4 = o4a && At("?3500") >= 0;
+        var o4Lines = new List<string>(spawn);
+
+        spawn.Clear();
+        Hit(3501, 9304);
+        System.Threading.Thread.Sleep(BattleLogger.DeferWindow + TimeSpan.FromMilliseconds(50));
+        Monster(3502, 0);
+        bool o5 = At("?3501") >= 0;
+        var o5Lines = new List<string>(spawn);
+
+        spawn.Clear();
+        Hit(3503, 9305);
+        ol.OnFrame(new FrameHeader(Op.MatchSuccess, 0, 0, 0), Array.Empty<byte>());
+        for (int i = 0; i <= BattleLogger.DeferFrames; i++) Beat();
+        bool o6 = At("?3503") < 0;
+
+        spawn.Clear();
+        Monster(830, 0);
+        Hit(4343, 9306);
+        ol.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(4000, 4343, "방닉", 1, 1002));
+        bool o7 = At("→ 루루") >= 0 && At("?4343") < 0;
+        var o7Lines = new List<string>(spawn);
+
         Console.WriteLine($"  {(o1 ? "OK  " : "FAIL")} O1 모르는 대상이 든 결과는 등록을 기다린다");
-        Console.WriteLine($"  {(o2 ? "OK  " : "FAIL")} O2 등록 뒤 다음 프레임에 이름을 붙여 나온다");
-        Console.WriteLine($"  {(o3 ? "OK  " : "FAIL")} O3 끝내 등록되지 않아도 줄은 사라지지 않는다: [{string.Join(" / ", spawn)}]");
+        Console.WriteLine($"  {(o2 ? "OK  " : "FAIL")} O2 등록이 온 그 프레임에 이름을 붙여 나온다: [{string.Join(" / ", o2Lines)}]");
+        Console.WriteLine($"  {(o3 ? "OK  " : "FAIL")} O3 연속 미확정은 뒤가 먼저 풀려도 도착 순서대로: [{string.Join(" / ", o3Lines)}]");
+        Console.WriteLine($"  {(o4 ? "OK  " : "FAIL")} O4 {BattleLogger.DeferFrames}프레임 안에 등록이 없으면 ?id로 확정: [{string.Join(" / ", o4Lines)}]");
+        Console.WriteLine($"  {(o5 ? "OK  " : "FAIL")} O5 몬스터 등록만 이어져도 {BattleLogger.DeferWindow.TotalMilliseconds}ms가 지나면 확정: [{string.Join(" / ", o5Lines)}]");
+        Console.WriteLine($"  {(o6 ? "OK  " : "FAIL")} O6 새 판이 시작되면 대기 항목은 넘어가지 않는다");
+        Console.WriteLine($"  {(o7 ? "OK  " : "FAIL")} O7 명단(RunningGame)으로 풀려도 그 프레임에 나온다: [{string.Join(" / ", o7Lines)}]");
         Console.WriteLine();
-        if (!o1) fails++;
-        if (!o2) fails++;
-        if (!o3) fails++;
+        foreach (bool ok in new[] { o1, o2, o3, o4, o5, o6, o7 }) if (!ok) fails++;
+
+        // U. 자리표시자 → 확정 이름. 닉네임은 표시명·캐시 어디에도 쓰이지 않는다
+        Console.WriteLine("=== 자리표시자와 닉네임 ===");
+        string pCachePath = Path.Combine(dir, "roster-cache-p.tsv");
+        if (File.Exists(pCachePath)) File.Delete(pCachePath);
+        var pCache = new RosterCache(pCachePath, _ => { });
+        var roster = new Roster(names) { Cache = pCache };
+        var pLines = new List<string>();
+        var pl = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names, pCache);
+        pl.Mirror = (s, k, g, u, _) => pLines.Add(Palette.Strip(s).Trim());
+        (bool Changed, string Name, int Cached, List<string> Lines) Step(long heroId)
+        {
+            pLines.Clear();
+            byte[] body = Room(5000, 5252, "비밀닉", 1, heroId);
+            bool changed = roster.Update(body) && roster.LastChanged.Contains(5252);
+            pl.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), body);
+            return (changed, Palette.Strip(roster.Name(5252)), pCache.Count, new List<string>(pLines));
+        }
+        var p0 = Step(0);
+        var p1 = Step(9999);
+        var p2 = Step(1001);
+        var p3 = Step(1001);
+        string pFile = File.Exists(pCachePath) ? File.ReadAllText(pCachePath) : "";
+        bool pa = p0.Changed && p0.Name == "2P" && p0.Cached == 0 && p0.Lines.Count == 0;
+        bool pb = p1.Changed && p1.Name == "2P" && p1.Cached == 0 && p1.Lines.Exists(l => l == "· 참가자 2P");
+        bool pc = p2.Changed && p2.Name == "패니" && p2.Cached == 1 && p2.Lines.Exists(l => l == "· 참가자 패니")
+                  && pFile.Contains("패니");
+        bool pd = !p3.Changed && p3.Lines.Count == 0;
+        var allP = new List<string>();
+        foreach (var p in new[] { p0, p1, p2, p3 }) allP.AddRange(p.Lines);
+        bool pe = !allP.Exists(l => l.Contains("비밀닉")) && !pFile.Contains("비밀닉")
+                  && !oAll.Exists(l => l.Contains("몹닉") || l.Contains("방닉"));
+        Console.WriteLine($"  {(pa ? "OK  " : "FAIL")} Ua 선택 전: 2P, 참가자 줄·캐시 없음");
+        Console.WriteLine($"  {(pb ? "OK  " : "FAIL")} Ub 이름표 없는 HeroId: 이름이 같아도 갱신, 2P로 참가자 줄, 캐시 없음: [{string.Join(" / ", p1.Lines)}]");
+        Console.WriteLine($"  {(pc ? "OK  " : "FAIL")} Uc 확정 이름: 갱신·참가자 줄·캐시 1건: [{string.Join(" / ", p2.Lines)}]");
+        Console.WriteLine($"  {(pd ? "OK  " : "FAIL")} Ud 같은 명단이 다시 오면 바뀐 것 없음");
+        Console.WriteLine($"  {(pe ? "OK  " : "FAIL")} Ue 닉네임이 줄·캐시 파일에 나오지 않는다");
+        Console.WriteLine();
+        foreach (bool ok in new[] { pa, pb, pc, pd, pe }) if (!ok) fails++;
 
         // Q. 이름표 캐시: 재접속으로 명단을 놓쳐도 이름이 되살아난다
         Console.WriteLine("=== 이름표 캐시 (재접속) ===");
@@ -371,27 +455,51 @@ class Program
         bool q1ok = cacheA.Count > 0 && File.Exists(cachePath);
 
         string cacheText = File.ReadAllText(cachePath);
-        bool q2ok = !cacheText.Contains("4242");
+        bool q2ok = !cacheText.Contains("4242") && !cacheText.Contains("테스터") && cacheText.Contains("패니")
+                    && cacheText.StartsWith("# roster cache v3");
 
         var q3Lines = new List<string>();
         var cacheB = new RosterCache(cachePath, _ => { });
         var q3 = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, cacheB);
         q3.Mirror = (s, k, g, u, _) => q3Lines.Add(Palette.Strip(s).Trim());
         q3.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 4242));
-        bool q3ok = q3Lines.Exists(l => !l.Contains("?4242"));
+        bool q3ok = q3Lines.Exists(l => l.Contains("패니 행동 시작"));
 
         q3.OnFrame(new FrameHeader(Op.MatchSuccess, 0, 0, 0), Array.Empty<byte>());
         bool q4ok = !File.Exists(cachePath) && cacheB.Count == 0;
 
+        // 이전 버전 파일: v3가 만든 행을 그대로 두고 헤더만 바꾼다. 값은 v2 시절처럼 닉네임으로 바꿔 둔다.
+        (bool Gone, List<string> Lines) Legacy(string? header)
+        {
+            if (File.Exists(cachePath)) File.Delete(cachePath);
+            var make = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames,
+                                        new RosterCache(cachePath, _ => { }));
+            make.Mirror = (s, k, g, u, _) => { };
+            make.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(555, 4242, "테스터", 0, 1001));
+            var rows = new List<string>(File.ReadAllLines(cachePath));
+            rows.RemoveAt(0);
+            if (header is not null) rows.Insert(0, header);
+            File.WriteAllText(cachePath, string.Join("\n", rows).Replace("패니", "테스터") + "\n");
+
+            var legacy = new RosterCache(cachePath, _ => { });
+            var got = new List<string>();
+            var lg = new BattleLogger(log, null, false, new HashSet<int>(), false, true, qNames, legacy);
+            lg.Mirror = (s, k, g, u, _) => got.Add(Palette.Strip(s).Trim());
+            bool gone = legacy.Count == 0 && legacy.RoomId == 0 && !File.Exists(cachePath);
+            lg.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 4242));
+            return (gone && got.Exists(l => l.Contains("?4242")) && !got.Exists(l => l.Contains("테스터")), got);
+        }
+        var q5 = Legacy("# roster cache v2 (keys are hashed; see RosterCache.cs)");
+        var q6 = Legacy(null);
+
         Console.WriteLine($"  {(q1ok ? "OK  " : "FAIL")} Q1 명단을 받으면 캐시에 쌓인다 ({cacheA.Count}건)");
-        Console.WriteLine($"  {(q2ok ? "OK  " : "FAIL")} Q2 파일에 원본 id가 남지 않는다");
-        Console.WriteLine($"  {(q3ok ? "OK  " : "FAIL")} Q3 명단 없이도 이름이 되살아난다: [{string.Join(" / ", q3Lines)}]");
+        Console.WriteLine($"  {(q2ok ? "OK  " : "FAIL")} Q2 v3 파일에 원본 id·닉네임이 없고 캐릭터 이름만 있다");
+        Console.WriteLine($"  {(q3ok ? "OK  " : "FAIL")} Q3 v3 재접속은 명단 없이도 이름이 되살아난다: [{string.Join(" / ", q3Lines)}]");
         Console.WriteLine($"  {(q4ok ? "OK  " : "FAIL")} Q4 새 판이 시작되면 캐시를 버린다");
+        Console.WriteLine($"  {(q5.Gone ? "OK  " : "FAIL")} Q5 v2 파일은 읽지 않고 지운다: [{string.Join(" / ", q5.Lines)}]");
+        Console.WriteLine($"  {(q6.Gone ? "OK  " : "FAIL")} Q6 헤더 없는 파일도 지운다: [{string.Join(" / ", q6.Lines)}]");
         Console.WriteLine();
-        if (!q1ok) fails++;
-        if (!q2ok) fails++;
-        if (!q3ok) fails++;
-        if (!q4ok) fails++;
+        foreach (bool ok in new[] { q1ok, q2ok, q3ok, q4ok, q5.Gone, q6.Gone }) if (!ok) fails++;
 
         // R. 안전장치 둘: 판 이탈(씬)과 최초 캐싱 전(다른 방)
         Console.WriteLine("=== 캐시 안전장치 ===");

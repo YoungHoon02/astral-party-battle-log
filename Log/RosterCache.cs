@@ -26,7 +26,8 @@ internal sealed class RosterCache
         }
     }
 
-    private const string Header = "# roster cache v2 (keys are hashed; see RosterCache.cs)";
+    // v2까지는 캐릭터 선택 전 계정 닉네임이 이름값으로 들어갈 수 있었다. 헤더가 다르면 통째로 버린다.
+    private const string Header = "# roster cache v3 (keys are hashed; see RosterCache.cs)";
 
     public long RoomId;
 
@@ -78,7 +79,14 @@ internal sealed class RosterCache
         try
         {
             if (!File.Exists(_path)) return;
-            foreach (string line in File.ReadAllLines(_path))
+            string[] lines = File.ReadAllLines(_path);
+            if (lines.Length == 0 || lines[0] != Header)
+            {
+                _warn("roster cache header is not v3; discarded");
+                Discard();
+                return;
+            }
+            foreach (string line in lines)
             {
                 if (line.Length == 0) continue;
                 if (line[0] == '#')
