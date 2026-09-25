@@ -320,7 +320,8 @@ static class ReplayCheck
 
     // 비교 모드: 다른 스케줄러 버전의 기록에 현재 스케줄러를 돌려 줄마다 공개 시각이 어떻게 바뀌는지 본다.
     // 입력(수신·신호·시각)은 결정과 무관하게 기록된 그대로라 가정 실험이 된다. 엄격 재현 성공으로 표시하지 않는다.
-    // 원래 자기 신호·창 닫힘으로 공개된 줄은 그 시각이 화면에 보인 순간이라, 그보다 먼저 나가면 조기 표시로 센다.
+    // 원래 자기 신호·창 닫힘으로 공개된 줄이 그 신호보다 먼저 나가면 따로 센다. 검토 대상일 뿐 조기 표시 판정이
+    // 아니다 — 과거 신호가 실제 화면보다 늦었다면 정상적인 앞당김도 여기 들어간다. 화면 정확도는 독립 증거가 있을 때만.
     public static int Compare(string path, bool lenient)
     {
         byte[] bytes = File.ReadAllBytes(path);
@@ -343,7 +344,7 @@ static class ReplayCheck
         if (stop is not null) Console.WriteLine("  재생 중단: " + stop);
         Dictionary<long, (long At, string Why)> before = Releases(expected), after = Releases(sink.Stream);
 
-        int earlier = 0, later = 0, early = 0, missing = 0;
+        int earlier = 0, later = 0, beforeSignal = 0, missing = 0;
         long saved = 0;
         var moved = new List<(long Id, long Old, long New, string OldWhy, string NewWhy)>();
         foreach ((long id, (long at, string why)) in before)
@@ -359,7 +360,7 @@ static class ReplayCheck
             {
                 earlier++;
                 saved += at - now.At;
-                if (why is "own-signal" or "window-close") early++;
+                if (why is "own-signal" or "window-close") beforeSignal++;
             }
             else later++;
         }
@@ -369,14 +370,15 @@ static class ReplayCheck
         Console.WriteLine($"공개 줄 {before.Count}건 중 시각이 바뀐 줄 {moved.Count}건: 앞당김 {earlier}건(합계 {saved / 1e6:0.0}초), "
                           + $"늦어짐 {later}건, 새 결과에 없음 {missing}건");
         Console.WriteLine($"최대 대기: {MaxWait(before) / 1e6:0.0}초 → {MaxWait(after) / 1e6:0.0}초");
-        Console.WriteLine($"조기 표시(원래 화면 신호 시각보다 먼저): {early}건");
+        Console.WriteLine($"기존 신호 시각보다 빠른 줄: {beforeSignal}건 (검토 대상, 조기 표시 판정 아님)");
+        Console.WriteLine("화면 정확도: 판정 불가 — 기록에 독립 증거(공개 시점 구간·정렬 오차)가 없다");
         foreach (var m in moved.OrderBy(m => m.New - m.Old).Take(10))
         {
             OverlaySchedule.ItemIn it = items[m.Id];
             Console.WriteLine($"  item {m.Id,5} {it.Kind,-9} 수신 {it.ReceivedUs / 1e6,8:0.00}  {m.OldWhy,-13} {(m.Old - it.ReceivedUs) / 1e6,6:0.00}초"
                               + $" → {m.NewWhy,-13} {(m.New - it.ReceivedUs) / 1e6,6:0.00}초");
         }
-        return early == 0 && missing == 0 && stop is null ? 0 : 1;
+        return missing == 0 && stop is null ? 0 : 1;
     }
 
     static Dictionary<long, (long At, string Why)> Releases(List<string> stream)

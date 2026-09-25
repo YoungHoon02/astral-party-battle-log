@@ -210,7 +210,7 @@ static class ReplayTests
               Regex.Match(killedReplay.Out, "결정 [^\n]*").Value.Trim());
 
         var same = Child("compare", sched);
-        Check(same.Code == 0 && same.Out.Contains("시각이 바뀐 줄 0건") && same.Out.Contains("조기 표시(원래 화면 신호 시각보다 먼저): 0건"),
+        Check(same.Code == 0 && same.Out.Contains("시각이 바뀐 줄 0건") && same.Out.Contains("기존 신호 시각보다 빠른 줄: 0건"),
               "RP6 같은 버전 기록을 비교 모드로 돌리면 바뀐 공개 시각이 없다", Regex.Match(same.Out, "공개 줄[^\n]*").Value.Trim());
 
         byte[] bytes = File.ReadAllBytes(sched);
