@@ -32,6 +32,10 @@
     <Compile Include="$(SrcDir)\UI\OverlaySchedule.cs" />
     <Compile Include="$(SrcDir)\UI\OverlaySchedule.Gate.cs" />
     <Compile Include="$(SrcDir)\UI\OverlaySchedule.Turns.cs" />
+    <Compile Include="$(SrcDir)\UI\OverlaySchedule.Replay.cs" />
+    <Compile Include="$(SrcDir)\UI\ScheduleHealth.cs" />
+    <Compile Include="$(SrcDir)\UI\ScreenCandidates.cs" />
+    <Compile Include="$(SrcDir)\Log\ReplayWriter.cs" />
   </ItemGroup>
 
   <ItemGroup>

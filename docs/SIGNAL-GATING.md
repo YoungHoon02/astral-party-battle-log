@@ -1,8 +1,9 @@
 # 화면 신호로 결과 줄 공개하기
 
-> **상태:** `Overlay.SyncWithAnimation`(기본 true)이 켜져 있으면 이 규칙으로 동작한다. 측정 4 여섯째~여덟째
-> 판에서 캐릭터 주사위 65건과 PK 38건 중 화면보다 먼저 뜬 것은 0건이다. 반격은 실게임 표본이 없어 기록 재생과
-> 하네스로만 확인했고, 배속은 확인하지 않았다.
+> **상태:** `Overlay.SyncWithAnimation`(기본 true)이 켜져 있으면 이 규칙으로 동작한다. 관측한 표본(측정 4
+> 여섯째~여덟째 판, 캐릭터 주사위 65건·PK 38건)에서 조기 표시는 0건이다. 60초 상한, 큐 4096 초과 강제 해제,
+> 후킹 실패 시 모델 복귀가 있어 보장 조건은 아니다. 반격은 실게임 표본이 없어 기록 재생과 하네스로만 확인했고,
+> 배속은 확인하지 않았다.
 > 근거는 [OVERLAY-TIMING.md](OVERLAY-TIMING.md) 측정 4(여덟 판)이다. 코드는 `UI/OverlaySchedule.Gate.cs`(주사위·PK
 > 공개 규칙), `UI/OverlaySchedule.Turns.cs`(라운드 페이지·차례 줄), `UI/ScreenProbe.cs`(신호 수집),
 > `UI/ScreenRecorder.cs`(후보 수집 진단).
@@ -291,7 +292,10 @@
 
 아래 조사에는 이름 필터를 풀어 오브젝트 전환을 기록하는 진단 프로브가 필요하다. `Diagnostics.ScreenProbe`를
 켜면 모든 `SetActive` 전환을 `[probe] 시각 f=프레임 active=0|1 path=경로`로 남긴다(이름 가림 규칙은 측정 4와
-같다). 경로 계산은 프레임당 40개, 기록은 프레임당 80줄까지이고, 넘친 수는 씬 전환 때 `budgetPath`·`budgetLine`으로 남는다.
+같다). 경로 계산은 프레임당 400개, 기록은 프레임당 80줄까지이고, 넘친 수는 씬 전환 때 `budgetPath`·`budgetLine`으로 남는다.
+같은 설정에서 신호가 늦은 경로·상한·큐 예산·약한 창으로 풀린 구간, 짝 없는 신호(`stray`) 전후, 결과 없는 창(`weak-orphan`)에
+바뀐 경로를 `[candidates]` 줄로 보고한다. 후보 선정 근거일 뿐이며 자동으로 채택하지 않는다
+([TIMING-REPLAY-HANDOFF.md](TIMING-REPLAY-HANDOFF.md) 6절·11절).
 
 ### 라운드 전환 신호 후보 수집
 

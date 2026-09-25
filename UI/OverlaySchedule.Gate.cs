@@ -26,6 +26,9 @@ internal static partial class OverlaySchedule
         public Resolution Res;
         public long ResolvedUs;
         public Window? Win;
+        // 계측 전용: 해결 사유와 원인 신호 번호.
+        public Why Why;
+        public long CauseId = long.MinValue;
     }
 
     private sealed class Ledger
@@ -35,6 +38,7 @@ internal static partial class OverlaySchedule
         public bool Counter;
         public long Seq;
         public long ReceivedUs;
+        public long ItemId;
     }
 
     private sealed class Window
@@ -43,6 +47,7 @@ internal static partial class OverlaySchedule
         public long LastSeq = -1;
         public bool Ended;
         public long EndUs;
+        public long StartUs;
     }
 
     private readonly struct PendingSignal
@@ -53,10 +58,12 @@ internal static partial class OverlaySchedule
         public readonly IntPtr Instance;
         public readonly long AtUs;
         public readonly int Generation;
+        // 재생 기록 번호. 기록을 끄면 0이다.
+        public readonly long Id;
 
-        public PendingSignal(ScreenSignal kind, int pip, bool on, IntPtr instance, long atUs, int generation)
+        public PendingSignal(ScreenSignal kind, int pip, bool on, IntPtr instance, long atUs, int generation, long id)
         {
-            Kind = kind; Pip = pip; On = on; Instance = instance; AtUs = atUs; Generation = generation;
+            Kind = kind; Pip = pip; On = on; Instance = instance; AtUs = atUs; Generation = generation; Id = id;
         }
     }
 
@@ -83,25 +90,61 @@ internal static partial class OverlaySchedule
     // 대기 중인 줄은 신호를 더 받을 수 없으므로 모델 예약으로 넘긴다. 메인 스레드에서만 부른다.
     public static void FallBackToModel()
     {
-        if (!_gating) return;
-        _gating = false;
-        _barrier = null;
-        foreach (Entry e in Queue)
+        _touched = true;
+        bool rec = _recording;
+        if (rec)
         {
-            if (IsStale(e.Item)) continue;
-            if (!e.Scheduled) e.DueUs = DueOf(e.Item, out e.FloorUs);
-            Waiting.Enqueue(new Scheduled(e.Item, e.DueUs, e.FloorUs, e.Seq));
+            RecEnter();
+            EmitEnv(Env.Fallback);
+            BeginProcessing();
         }
-        ResetGating(_gateGeneration);
-        Signals.Clear();
+        try
+        {
+            if (!_gating) return;
+            _gating = false;
+            ScheduleHealth.Gating(false);
+            _barrier = null;
+            foreach (Entry e in Queue)
+            {
+                if (IsStale(e.Item))
+                {
+                    DropEntry(e);
+                    continue;
+                }
+                if (!e.Scheduled)
+                {
+                    e.DueUs = DueOf(e.Item, out e.FloorUs);
+                    Decide(Act.Schedule, e.Item, Why.Model, due: e.DueUs, floor: e.FloorUs);
+                }
+                Waiting.Enqueue(new Scheduled(e.Item, e.DueUs, e.FloorUs, e.Seq));
+                Decide(Act.Transfer, e.Item, Why.Fallback, due: e.DueUs, floor: e.FloorUs);
+                if (e.Gate != Gate.None && e.Res == Resolution.None)
+                    ScheduleHealth.GateLeft(e.Item.Generation, GateIndex(e.Gate), HealthCount.FallbackMoved);
+            }
+            ResetGating(_gateGeneration);
+            Signals.Clear();
+        }
+        finally
+        {
+            if (rec)
+            {
+                EndProcessing();
+                RecExit();
+            }
+        }
     }
 
     // 메인 스레드(SetActive 후킹)에서 온다. Pump가 수신 줄을 먼저 받은 뒤 처리한다.
     public static void Screen(ScreenSignal kind, int pip, bool on, IntPtr instance)
     {
+        _touched = true;
+        long at = Volatile.Read(ref _nowUs);
+        int generation = Volatile.Read(ref _generation);
+        ScheduleHealth.Signal(generation, (int)kind);
         if (!_gating) return;
-        Signals.Add(new PendingSignal(kind, pip, on, instance, Volatile.Read(ref _nowUs),
-                                      Volatile.Read(ref _generation)));
+        var s = new PendingSignal(kind, pip, on, instance, at, generation, _recording ? ++_signalIds : 0);
+        if (_recording) RecordSignal(s);
+        Signals.Add(s);
     }
 
     private static void ResetGating(int generation)
@@ -119,24 +162,45 @@ internal static partial class OverlaySchedule
     private static void PumpGated(long now, Action<string> line, Action<int> page, Action clear)
     {
         int generation = Volatile.Read(ref _generation);
-        if (generation != _gateGeneration) ResetGating(generation);
+        if (generation != _gateGeneration)
+        {
+            foreach (Entry e in Queue) DropEntry(e);
+            ResetGating(generation);
+        }
 
         while (Incoming.TryDequeue(out Item item))
         {
-            if (IsStale(item)) continue;
+            Take(item);
+            if (IsStale(item))
+            {
+                Drop(item);
+                continue;
+            }
             long seq = ++_seq;
-            if (item.Signal == Signal.Sync) _forceThroughSeq = seq;
+            if (item.Signal == Signal.Sync) ForceThrough(seq, bySignal: false);
             Queue.Add(NewEntry(item, seq));
         }
 
         foreach (PendingSignal s in Signals)
-            if (s.Generation == _gateGeneration) Handle(s);
+        {
+            TakeSignal(s);
+            if (s.Generation != _gateGeneration)
+            {
+                _cause = s.Id;
+                ScheduleHealth.Count(HealthCount.StaleSignal);
+                Note(Diag.StaleSignal);
+                continue;
+            }
+            _cause = s.Id;
+            Handle(s);
+        }
+        _cause = Null;
         Signals.Clear();
 
         foreach (Entry e in Queue)
             if (e.Gate != Gate.None && e.Res == Resolution.None && now - e.Item.ReceivedUs >= GateCapUs)
             {
-                Resolve(e, Resolution.Cap, now);
+                Resolve(e, Resolution.Cap, now, Why.Cap);
                 GateTrace($"timeout kind={e.Gate.ToString().ToLowerInvariant()} waited={(now - e.Item.ReceivedUs) / 1000}ms");
             }
 
@@ -146,6 +210,7 @@ internal static partial class OverlaySchedule
             if (IsStale(head.Item))
             {
                 Queue.RemoveAt(0);
+                DropEntry(head);
                 continue;
             }
 
@@ -154,14 +219,15 @@ internal static partial class OverlaySchedule
                 if (head.Res == Resolution.None)
                 {
                     if (Queue.Count <= MaxWaiting) break;
-                    Resolve(head, Resolution.Cap, now);
+                    Resolve(head, Resolution.Cap, now, Why.Budget);
                 }
                 ReleaseGated(head, now, line, page, clear);
                 continue;
             }
 
             bool toCounter = false;
-            if (!BarrierLifted(now) && Queue.Count <= MaxWaiting)
+            bool lifted = BarrierLifted(now);
+            if (!lifted && Queue.Count <= MaxWaiting)
             {
                 toCounter = SyncBeforeCounter();
                 if (!toCounter) break;
@@ -171,16 +237,29 @@ internal static partial class OverlaySchedule
             {
                 head.DueUs = DueOf(head.Item, out head.FloorUs);
                 head.Scheduled = true;
+                Decide(Act.Schedule, head.Item, Why.Model, due: head.DueUs, floor: head.FloorUs);
             }
-            long ready = head.Seq <= _forceThroughSeq ? Math.Max(head.FloorUs, _anchorUs) : head.DueUs;
+            bool forced = head.Seq <= _forceThroughSeq;
+            long ready = forced ? Math.Max(head.FloorUs, _anchorUs) : head.DueUs;
             if (!toCounter && ready > now && Queue.Count <= MaxWaiting) break;
 
             Queue.RemoveAt(0);
-            Release(new Scheduled(head.Item, head.DueUs, head.FloorUs, head.Seq), now, line, page, clear);
+            Why why = toCounter ? Why.CounterSync
+                : ready > now || !lifted ? Why.Budget
+                : PlannedWhy(forced, head.DueUs, now);
+            Release(new Scheduled(head.Item, head.DueUs, head.FloorUs, head.Seq), now, line, page, clear, why,
+                    why == Why.LaterSignal ? _forceCause : Null);
         }
     }
 
     private static Entry NewEntry(Item item, long seq)
+    {
+        Entry e = ClassifyEntry(item, seq);
+        if (e.Gate != Gate.None) ScheduleHealth.GateCreated(item.Generation, GateIndex(e.Gate));
+        return e;
+    }
+
+    private static Entry ClassifyEntry(Item item, long seq)
     {
         var e = new Entry { Item = item, Seq = seq };
         // 1라운드는 넘어올 앞 라운드 줄이 없고, 페이지가 전투 씬 로드 전에 와서 오버레이 표시 판단에 쓰인다.
@@ -241,6 +320,7 @@ internal static partial class OverlaySchedule
             if (!counter.HeldTraced)
             {
                 counter.HeldTraced = true;
+                Note(Diag.CounterHeld, counter.Item.Id);
                 GateTrace($"counter-held by={(Queue[i].Gate != Gate.None ? Queue[i].Gate.ToString() : it.Kind.ToString()).ToLowerInvariant()} "
                           + $"signal={it.Signal.ToString().ToLowerInvariant()}");
             }
@@ -260,7 +340,17 @@ internal static partial class OverlaySchedule
     private static void ReleaseGated(Entry head, long now, Action<string> line, Action<int> page, Action clear)
     {
         Queue.RemoveAt(0);
-        Release(new Scheduled(head.Item, now, now, head.Seq), now, line, page, clear);
+        Release(new Scheduled(head.Item, now, now, head.Seq), now, line, page, clear, head.Why, head.CauseId,
+                resolvedUs: head.ResolvedUs, planned: false);
+        ScheduleHealth.GateShown(head.Item.Generation, GateIndex(head.Gate), HealthResolution(head.Why));
+        if (ScreenCandidates.Enabled && head.Why != Why.OwnSignal)
+            ScreenCandidates.Gap(head.Why switch
+            {
+                Why.WindowClose => GapKind.Weak,
+                Why.LaterSignal => GapKind.Late,
+                Why.Cap => GapKind.Cap,
+                _ => GapKind.Budget,
+            }, head.Gate.ToString().ToLowerInvariant(), head.Item.ReceivedUs, now);
         GateTrace($"release kind={head.Gate.ToString().ToLowerInvariant()} by={head.Res.ToString().ToLowerInvariant()} "
                   + $"waited={(now - head.Item.ReceivedUs) / 1000}ms");
 
@@ -270,7 +360,8 @@ internal static partial class OverlaySchedule
         {
             Entry follower = Queue[0];
             Queue.RemoveAt(0);
-            Release(new Scheduled(follower.Item, now, now, follower.Seq), now, line, page, clear);
+            Release(new Scheduled(follower.Item, now, now, follower.Seq), now, line, page, clear, Why.GroupFollow,
+                    leader: head.Item.Id, planned: false);
         }
         _lastGroup = -1;
 
@@ -310,7 +401,7 @@ internal static partial class OverlaySchedule
                 if (s.On)
                 {
                     CloseWindow(s.AtUs);
-                    _window = new Window();
+                    _window = new Window { StartUs = s.AtUs };
                 }
                 else CloseWindow(s.AtUs);
                 break;
@@ -365,23 +456,26 @@ internal static partial class OverlaySchedule
         {
             owed.Pips.Remove(pip);
             if (owed.Pips.Count == 0) Unconsumed.Remove(owed);
+            Note(Diag.Consume, owed.ItemId);
             GateTrace($"consume kind=dice pip={pip}");
             return;
         }
         if (pending is null)
         {
+            Stray(atUs);
             GateTrace($"stray kind=dice pip={pip}");
             return;
         }
         pending.Pips.Remove(pip);
         ResolveOlder(pending.Seq, atUs);
-        if (pending.Pips.Count == 0) Resolve(pending, Resolution.Signal, atUs);
+        if (pending.Pips.Count == 0) Resolve(pending, Resolution.Signal, atUs, Why.OwnSignal);
     }
 
     private static void Strike(long atUs)
     {
         if (_window is null)
         {
+            Note(Diag.Outside);
             GateTrace("outside");
             return;
         }
@@ -394,11 +488,12 @@ internal static partial class OverlaySchedule
             if (owed is not null && (pending is null || owed.Seq < pending.Seq))
             {
                 Unconsumed.Remove(owed);
+                Note(Diag.Consume, owed.ItemId);
                 GateTrace("consume kind=pk");
                 return;
             }
             if (pending is null) return;
-            Resolve(pending, Resolution.Signal, atUs);
+            Resolve(pending, Resolution.Signal, atUs, Why.OwnSignal);
             pending.Win = w;
             w.LastSeq = pending.Seq;
             ResolveOlder(pending.Seq, atUs);
@@ -408,6 +503,7 @@ internal static partial class OverlaySchedule
         // 두 번째 이후 스트라이크는 이 창에서 방금 공개한 PK 바로 다음 항목이 반격일 때만 쓴다.
         if (w.LastSeq < 0)
         {
+            Note(Diag.ExtraStrike);
             GateTrace("extra-strike");
             return;
         }
@@ -417,16 +513,18 @@ internal static partial class OverlaySchedule
         {
             Unconsumed.Remove(nextOwed);
             w.LastSeq = nextOwed.Seq;
+            Note(Diag.Consume, nextOwed.ItemId);
             GateTrace("consume kind=pk counter=1");
             return;
         }
         if (!owedFirst && next is not null && next.Counter && next.Item.ReceivedUs < atUs)
         {
-            Resolve(next, Resolution.Signal, atUs);
+            Resolve(next, Resolution.Signal, atUs, Why.OwnSignal);
             next.Win = w;
             w.LastSeq = next.Seq;
             return;
         }
+        Note(Diag.ExtraStrike);
         GateTrace("extra-strike");
     }
 
@@ -439,17 +537,21 @@ internal static partial class OverlaySchedule
         if (owed is not null && (pending is null || owed.Seq < pending.Seq))
         {
             Unconsumed.Remove(owed);
+            Note(Diag.WeakSettle, owed.ItemId);
             GateTrace("weak settle=ledger");
             return;
         }
         if (pending is null)
         {
+            Note(Diag.WeakOrphan);
+            if (ScreenCandidates.Enabled) ScreenCandidates.Gap(GapKind.WeakOrphan, "pk", w.StartUs, atUs);
             GateTrace("weak-orphan");
             return;
         }
-        Resolve(pending, Resolution.Signal, atUs);
+        Resolve(pending, Resolution.Signal, atUs, Why.WindowClose);
         pending.Win = w;
         ResolveOlder(pending.Seq, atUs);
+        Note(Diag.WeakSettle, pending.Item.Id);
         GateTrace("weak settle=pending");
     }
 
@@ -479,19 +581,24 @@ internal static partial class OverlaySchedule
         foreach (Entry e in Queue)
         {
             if (e.Seq >= seq) break;
-            if (e.Gate != Gate.None && e.Res == Resolution.None) Resolve(e, Resolution.Late, atUs);
+            if (e.Gate != Gate.None && e.Res == Resolution.None) Resolve(e, Resolution.Late, atUs, Why.LaterSignal);
         }
     }
 
-    private static void Resolve(Entry e, Resolution how, long atUs)
+    // why는 계측 사유다. 판단은 how만 쓴다(상한과 큐 예산은 둘 다 Cap).
+    private static void Resolve(Entry e, Resolution how, long atUs, Why why)
     {
         e.Res = how;
         e.ResolvedUs = atUs;
+        e.Why = why;
+        e.CauseId = how == Resolution.Cap ? Null : _cause;
+        ScheduleHealth.GateResolved(e.Item.Generation, GateIndex(e.Gate), HealthResolution(why));
+        Decide(Act.Resolve, e.Item, why, e.CauseId, resolved: atUs);
         if (how == Resolution.Signal)
         {
             // 화면이 이 사건에 왔으면 앞 줄의 연출은 이미 지났다(설계 전제 1). 앞 일반 줄의 모델 대기를 풀지
             // 않으면 신호를 받은 줄도 그 뒤에서 기다린다(측정 4 여덟째 판 +2.88·+3.48초).
-            _forceThroughSeq = Math.Max(_forceThroughSeq, e.Seq);
+            ForceThrough(e.Seq, bySignal: true);
             return;
         }
         // 눈을 모르는 주사위는 올 신호가 없어 장부에 올릴 것도 없다. 라운드 팁은 뒤에 받은 페이지와만 짝지어져
@@ -502,8 +609,16 @@ internal static partial class OverlaySchedule
         Unconsumed.Add(new Ledger
         {
             Gate = e.Gate, Pips = new List<int>(e.Pips), Counter = e.Counter, Seq = e.Seq,
-            ReceivedUs = e.Item.ReceivedUs,
+            ReceivedUs = e.Item.ReceivedUs, ItemId = e.Item.Id,
         });
+    }
+
+    private static void Stray(long atUs)
+    {
+        Note(Diag.Stray);
+        if (ScreenCandidates.Enabled)
+            ScreenCandidates.Gap(GapKind.Stray, "signal", atUs - ScreenCandidates.StrayWindowUs,
+                                 atUs + ScreenCandidates.StrayWindowUs);
     }
 
     private static void GateTrace(string text)

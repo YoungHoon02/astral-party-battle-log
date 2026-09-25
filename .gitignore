@@ -22,3 +22,7 @@ names.tsv
 
 # 게임 어셈블리의 전체 타입 목록 — ref/와 같은 성격이다.
 docs/types-all.txt
+
+# 진단 산출물. 로컬에서만 본다 (docs/TIMING-REPLAY-HANDOFF.md 3절).
+replay/
+replay-*.jsonl

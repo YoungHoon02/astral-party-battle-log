@@ -109,7 +109,11 @@ public class Plugin : BasePlugin
         _logger = logger;
         SocketTap.OnFrame = logger.OnFrame;
         // 순수 .NET 이벤트라 IL2CPP 델리게이트 등록 금지에 걸리지 않는다.
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => logger.Close();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            logger.Close();
+            OverlaySchedule.Shutdown(unload: false);
+        };
 
         ConfigEntry<bool> syncAnimation = Config.Bind(
             "Overlay", "SyncWithAnimation", true,
@@ -128,7 +132,15 @@ public class Plugin : BasePlugin
         ConfigEntry<bool> screenProbe = Config.Bind(
             "Diagnostics", "ScreenProbe", false,
             "화면 신호 후보를 찾기 위해 모든 GameObject 활성 전환(경로·시각)을 BepInEx 로그에 남긴다. " +
+            "신호가 빠진 구간에 바뀐 경로를 [candidates] 줄로 보고한다(후보일 뿐 자동 채택하지 않는다). " +
             "TraceTiming과 같이 켜면 패킷 수신 시각과 대조할 수 있다. 부하가 크므로 측정이 끝나면 false로 둘 것.");
+        ConfigEntry<bool> replay = Config.Bind(
+            "Diagnostics", "Replay", false,
+            "오버레이 표시 시점을 오프라인으로 재현하기 위한 기록(JSONL)을 플러그인 폴더의 replay/에 남긴다. " +
+            "전투 텍스트·계정 식별자·방 번호는 넣지 않지만 게임 진행 시각은 들어가므로 공유하지 말 것. " +
+            "실행 중에 켜도 적용되지 않는다(다음 실행부터). 재생은 tools/harness.");
+
+        if (showOverlay.Value && replay.Value) StartReplay();
 
         if (showOverlay.Value)
         {
@@ -165,7 +177,8 @@ public class Plugin : BasePlugin
             if (gating || screenProbe.Value)
             {
                 bool hooked = ScreenProbe.Init(Log, _harmony, gating ? OverlaySchedule.Screen : null,
-                                               gating ? OverlaySchedule.FallBackToModel : null, screenProbe.Value);
+                                               gating ? HookDisabled : null, screenProbe.Value);
+                OverlaySchedule.NoteHook(hooked ? HookState.Installed : HookState.Failed);
                 if (!hooked && gating)
                 {
                     OverlaySchedule.FallBackToModel();
@@ -180,6 +193,30 @@ public class Plugin : BasePlugin
         }
 
         if (path is not null) Log.LogInfo($"Battle log file: {path}");
+    }
+
+    private static void HookDisabled()
+    {
+        OverlaySchedule.NoteHook(HookState.Disabled);
+        OverlaySchedule.FallBackToModel();
+    }
+
+    // 실행마다 새 파일 하나에 여러 판을 잇는다. 파일명에 uid·방 번호를 쓰지 않는다.
+    private void StartReplay()
+    {
+        try
+        {
+            string dir = Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "replay");
+            Directory.CreateDirectory(dir);
+            string file = Path.Combine(dir, $"replay-{DateTime.Now:yyyyMMdd-HHmmss}-{Environment.ProcessId}.jsonl");
+            var stream = new FileStream(file, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            OverlaySchedule.StartReplay(OverlaySchedule.NewReplayWriter(stream, Log.LogWarning));
+            Log.LogInfo($"Replay recording: {file}");
+        }
+        catch (Exception e)
+        {
+            Log.LogWarning($"Could not start the replay recording: {e.Message}");
+        }
     }
 
     // 값 두 개를 따로 대입하면 설정 파일을 두 번 쓴다.
@@ -201,7 +238,7 @@ public class Plugin : BasePlugin
     public override bool Unload()
     {
         SocketTap.OnFrame = null;
-        OverlaySchedule.Discard();
+        OverlaySchedule.Shutdown(unload: true);
         _logger?.Close();
         _harmony?.UnpatchSelf();
         return true;

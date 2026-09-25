@@ -24,6 +24,7 @@ internal static class ScreenRecorder
     private static int _pathsThisFrame;
     private static int _linesThisFrame;
     private static long _budgetPath, _budgetLine;
+    private static int _pathMissThisFrame, _lineMissThisFrame;
 
     public static bool Enabled { get; private set; }
 
@@ -32,17 +33,25 @@ internal static class ScreenRecorder
         _log = log;
         Enabled = true;
         log.LogInfo("[probe] recording every SetActive change");
+        ScreenCandidates.Init(log.LogInfo);
     }
 
-    public static void Disable() => Enabled = false;
+    public static void Disable()
+    {
+        Enabled = false;
+        ScreenCandidates.Disable();
+    }
 
     public static void OnScene(string scene)
     {
-        if (Enabled) Write($"scene name={Mask(scene)} budgetPath={_budgetPath} budgetLine={_budgetLine}");
+        if (!Enabled) return;
+        Write($"scene name={Mask(scene)} budgetPath={_budgetPath} budgetLine={_budgetLine}");
+        ScreenCandidates.Boundary(OverlaySchedule.NowUs);
     }
 
     // FairyGUI는 숨긴 오브젝트를 부모에서 떼었다가 다시 붙여서, 경로를 캐시하면 떼어진 상태만 남는다.
-    public static void Record(GameObject go, bool value)
+    // 후보 버퍼에도 이 시점의 마스킹된 경로 문자열을 넘긴다. 나중에 포인터로 다시 읽지 않는다.
+    public static void Record(GameObject go, bool value, byte tag)
     {
         int frame = Time.frameCount;
         if (frame != _frame)
@@ -50,22 +59,35 @@ internal static class ScreenRecorder
             _frame = frame;
             _pathsThisFrame = 0;
             _linesThisFrame = 0;
+            FlushMisses();
         }
         if (_pathsThisFrame >= MaxPathsPerFrame)
         {
             _budgetPath++;
+            _pathMissThisFrame++;
+            ScreenCandidates.Budget(OverlaySchedule.NowUs);
             return;
         }
         _pathsThisFrame++;
         string? path = PathOf(go.transform);
         if (path is null) return;
+        ScreenCandidates.Transition(path, OverlaySchedule.NowUs, value, tag);
         if (_linesThisFrame >= MaxLinesPerFrame)
         {
             _budgetLine++;
+            _lineMissThisFrame++;
             return;
         }
         _linesThisFrame++;
         Write($"active={(value ? 1 : 0)} path={path}");
+    }
+
+    // 예산 초과는 한 프레임에 수백 번 날 수 있어 프레임 단위로 모아 건강 요약에 넘긴다.
+    private static void FlushMisses()
+    {
+        if (_pathMissThisFrame > 0) ScheduleHealth.Count(HealthCount.PathBudget, _pathMissThisFrame);
+        if (_lineMissThisFrame > 0) ScheduleHealth.Count(HealthCount.LineBudget, _lineMissThisFrame);
+        _pathMissThisFrame = _lineMissThisFrame = 0;
     }
 
     private static string? PathOf(Transform transform)
@@ -79,6 +101,8 @@ internal static class ScreenRecorder
     }
 
     // 플레이어별 카메라가 "<닉네임>_VirtualCamera"라 ASCII 닉네임도 새므로 따로 가린다.
+    // 비ASCII·6자리 이상 숫자·알려진 카메라 접미사만 가리는 휴리스틱이라, 이 밖의 모양으로 들어간
+    // 식별 정보는 남을 수 있다. 결과는 로컬에만 두고 공유하지 않는다.
     private static string Mask(string name)
     {
         if (name.EndsWith(PlayerCameraSuffix, StringComparison.Ordinal) && name.Length > PlayerCameraSuffix.Length)

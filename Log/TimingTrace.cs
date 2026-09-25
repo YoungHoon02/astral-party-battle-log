@@ -20,4 +20,6 @@ internal static class TimingTrace
     {
         if (Enabled) _log?.LogInfo($"[timing] {DateTime.Now:HH:mm:ss.fff} {text}");
     }
+
+    public static void Warn(string text) => _log?.LogWarning(text);
 }

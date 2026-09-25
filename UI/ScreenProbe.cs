@@ -31,6 +31,7 @@ internal static class ScreenProbe
 
     private static int _frame = -1;
     private static int _namesThisFrame;
+    private static int _nameMissThisFrame;
 
     // 설치에 실패하면 false. 설치 뒤 오류가 반복돼 스스로 꺼질 때는 onDisabled를 부른다.
     public static bool Init(ManualLogSource log, Harmony harmony,
@@ -72,7 +73,7 @@ internal static class ScreenProbe
             if (Active.TryGetValue(key, out bool last) && last == value) return;
             Active[key] = value;
             if (tag is { } t) _signal?.Invoke(t.Sig, t.Pip, value, key);
-            if (record) ScreenRecorder.Record(go, value);
+            if (record) ScreenRecorder.Record(go, value, tag is { } k ? (byte)k.Sig : ScreenCandidates.NoTag);
         }
         catch (Exception e)
         {
@@ -88,8 +89,15 @@ internal static class ScreenProbe
         {
             _frame = frame;
             _namesThisFrame = 0;
+            if (_nameMissThisFrame > 0) ScheduleHealth.Count(HealthCount.NameBudget, _nameMissThisFrame);
+            _nameMissThisFrame = 0;
         }
-        if (_namesThisFrame >= MaxNewNamesPerFrame) return false;
+        if (_namesThisFrame >= MaxNewNamesPerFrame)
+        {
+            _nameMissThisFrame++;
+            ScreenCandidates.Budget(OverlaySchedule.NowUs);
+            return false;
+        }
         _namesThisFrame++;
         string name = go.name;
         tag = SignalOf(name);

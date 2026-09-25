@@ -28,12 +28,14 @@ internal static partial class OverlaySchedule
         public readonly string? Text;
         public readonly int Round;
         public readonly int Detail;
+        // 재생 기록 번호. 기록을 끄면 0이다.
+        public readonly long Id;
 
         public Item(Signal signal, LineKind kind, long group, int units, long receivedUs, float speed,
-                    int generation, string? text, int round, int detail)
+                    int generation, string? text, int round, int detail, long id)
         {
             Signal = signal; Kind = kind; Group = group; Units = units; ReceivedUs = receivedUs;
-            Speed = speed; Generation = generation; Text = text; Round = round; Detail = detail;
+            Speed = speed; Generation = generation; Text = text; Round = round; Detail = detail; Id = id;
         }
     }
 
@@ -84,6 +86,9 @@ internal static partial class OverlaySchedule
     private static long _lastGroupFloorUs;
     private static long _seq;
     private static long _forceThroughSeq = -1;
+    // 앞당김 사유 계측용. 마지막으로 앞당김 범위를 넓힌 것이 화면 신호였는지.
+    private static bool _forceBySignal;
+    private static long _forceCause = long.MinValue;
     private static long _lastTracedGroup = -1;
 
     private static bool _enabled;
@@ -94,26 +99,42 @@ internal static partial class OverlaySchedule
     // 연출 동기화를 켜면 화면 신호 게이트로 시작한다. 후킹을 못 걸면 FallBackToModel로 추정 방식에 남는다.
     public static void Init(ManualLogSource log, bool enabled, int maxLagMs, bool traceTiming)
     {
+        _touched = true;
         _enabled = enabled;
         _gating = enabled;
         _anchorUs = long.MinValue;
         _maxLagUs = Math.Max(0, maxLagMs) * 1000L;
         TimingTrace.Init(log, traceTiming);
+        ScheduleHealth.Init(log.LogInfo, ReplayState);
+        ScheduleHealth.Gating(_gating);
+        if (_recording)
+            Emit(new ReplayRecord
+            {
+                Type = (byte)Rec.Init, A = _nowUs, B = Bits(_speed), C = _enabled ? 1 : 0, D = _maxLagUs,
+                E = _gating ? 1 : 0, F = Volatile.Read(ref _generation),
+            });
     }
 
     // unscaledDelta < 0이면 Unity 값을 못 읽은 것이라 실시간 시계로 대신한다.
     // maxDelta로 자르는 이유: 연출은 잘린 deltaTime으로 진행하므로, 안 자르면 끊김 뒤에 로그가 먼저 풀린다.
     public static void Tick(float unscaledDelta, float maxDelta, float timeScale)
     {
+        _touched = true;
         long wall = FallbackClock.ElapsedTicks * 1_000_000L / Stopwatch.Frequency;
-        double dt = unscaledDelta < 0 ? (wall - _fallbackLastUs) / 1_000_000.0 : unscaledDelta;
+        bool fallback = unscaledDelta < 0;
+        double dt = fallback ? (wall - _fallbackLastUs) / 1_000_000.0 : unscaledDelta;
         _fallbackLastUs = wall;
 
         if (!(dt > 0)) dt = 0;
         if (maxDelta > 0 && dt > maxDelta) dt = maxDelta;
 
-        Volatile.Write(ref _nowUs, _nowUs + (long)(dt * 1_000_000));
-        Volatile.Write(ref _speed, SanitizeSpeed(timeScale));
+        long step = (long)(dt * 1_000_000);
+        float speed = SanitizeSpeed(timeScale);
+        Volatile.Write(ref _nowUs, _nowUs + step);
+        Volatile.Write(ref _speed, speed);
+        ScheduleHealth.Tick(fallback, step, speed);
+        if (_recording)
+            Emit(new ReplayRecord { Type = (byte)Rec.Tick, A = _nowUs, B = Bits(speed), C = fallback ? 1 : 0 });
     }
 
     private static float SanitizeSpeed(float s) =>
@@ -136,37 +157,96 @@ internal static partial class OverlaySchedule
 
     public static void Reset()
     {
-        Interlocked.Increment(ref _generation);
-        // 따로 보내면 이미 꺼내 둔 지난 판 줄이 비운 뒤에 붙을 수 있다.
-        Push(Signal.Clear, LineKind.Immediate, -1, 0, null, 0);
+        _touched = true;
+        bool rec = _recording;
+        if (rec) RecEnter();
+        long control = rec ? BeginChange() : Null;
+        try
+        {
+            int after = Interlocked.Increment(ref _generation);
+            if (rec) Control(control, Why.Reset, after);
+            ScheduleHealth.OnReset(after);
+            // 따로 보내면 이미 꺼내 둔 지난 판 줄이 비운 뒤에 붙을 수 있다.
+            Push(Signal.Clear, LineKind.Immediate, -1, 0, null, 0, parent: control);
+        }
+        finally
+        {
+            if (rec)
+            {
+                EndChange();
+                RecExit();
+            }
+        }
     }
 
     public static void Discard()
     {
-        Interlocked.Increment(ref _generation);
+        _touched = true;
+        bool rec = _recording;
+        if (rec) RecEnter();
+        long control = rec ? BeginChange() : Null;
+        try
+        {
+            int after = Interlocked.Increment(ref _generation);
+            if (rec) Control(control, Why.Discard, after);
+            ScheduleHealth.Close("left");
+        }
+        finally
+        {
+            if (rec)
+            {
+                EndChange();
+                RecExit();
+            }
+        }
     }
 
+    // 기록은 큐에 넣기 전에 남긴다. 그래야 이 줄을 꺼낸 take가 항상 뒤 순번이다.
     private static void Push(Signal signal, LineKind kind, long group, int units, string? text, int round,
-                             int detail = 0) =>
-        Incoming.Enqueue(new Item(signal, kind, group, units, Volatile.Read(ref _nowUs),
-                                  Volatile.Read(ref _speed), Volatile.Read(ref _generation),
-                                  text, round, detail));
+                             int detail = 0, long parent = Null)
+    {
+        _touched = true;
+        var item = new Item(signal, kind, group, units, Volatile.Read(ref _nowUs),
+                            Volatile.Read(ref _speed), Volatile.Read(ref _generation),
+                            text, round, detail, _recording ? Interlocked.Increment(ref _itemIds) : 0);
+        if (signal == Signal.Page || signal == Signal.Line && kind is LineKind.Turn or LineKind.Dice or LineKind.Attack)
+            ScheduleHealth.OnBattleInput(item.Generation);
+        if (_recording) RecordItem(item, parent);
+        Incoming.Enqueue(item);
+    }
 
     public static void Pump(Action<string> line, Action<int> page, Action clear)
     {
+        _touched = true;
         long now = _nowUs;
-        if (_gating)
+        bool rec = _recording;
+        if (rec) BeginPump(now);
+        try
         {
-            PumpGated(now, line, page, clear);
-            return;
+            if (_gating) PumpGated(now, line, page, clear);
+            else PumpModel(now, line, page, clear);
+            ScheduleHealth.QueueDepth(Queue.Count + Waiting.Count);
         }
+        finally
+        {
+            if (rec) EndPump();
+        }
+    }
 
+    private static void PumpModel(long now, Action<string> line, Action<int> page, Action clear)
+    {
         while (Incoming.TryDequeue(out Item item))
         {
-            if (IsStale(item)) continue;
+            Take(item);
+            if (IsStale(item))
+            {
+                Drop(item);
+                continue;
+            }
             long seq = ++_seq;
-            if (item.Signal == Signal.Sync) _forceThroughSeq = seq;
+            if (item.Signal == Signal.Sync) ForceThrough(seq, bySignal: false);
             long due = DueOf(item, out long floor);
+            Decide(Act.Schedule, item, Why.Model, due: due, floor: floor);
             Waiting.Enqueue(new Scheduled(item, due, floor, seq));
         }
 
@@ -176,17 +256,32 @@ internal static partial class OverlaySchedule
             if (IsStale(head.Item))
             {
                 Waiting.Dequeue();
+                Drop(head.Item);
                 continue;
             }
             // 동기화는 밀린 줄을 앞당기지만 결과 공개 하한까지만이다. 본인 주사위는 결정 창 닫힘(5308)이
             // 수 ms 뒤에 따라와, 하한이 없으면 공개 지연이 곧바로 무시된다(측정 4 셋째 판).
-            long ready = head.Seq <= _forceThroughSeq ? head.FloorUs : head.DueUs;
+            bool forced = head.Seq <= _forceThroughSeq;
+            long ready = forced ? head.FloorUs : head.DueUs;
             if (ready > now && Waiting.Count <= MaxWaiting) break;
 
             Waiting.Dequeue();
-            Release(head, now, line, page, clear);
+            Why why = ready > now ? Why.Budget : PlannedWhy(forced, head.DueUs, now);
+            Release(head, now, line, page, clear, why, why == Why.LaterSignal ? _forceCause : Null);
         }
     }
+
+    private static void ForceThrough(long seq, bool bySignal)
+    {
+        if (seq <= _forceThroughSeq) return;
+        _forceThroughSeq = seq;
+        _forceBySignal = bySignal;
+        _forceCause = bySignal ? _cause : Null;
+    }
+
+    // 모델 기한에 나간 줄과 동기화·신호가 앞당긴 줄을 구별한다(계측 사유일 뿐 판단에는 쓰지 않는다).
+    private static Why PlannedWhy(bool forced, long due, long now) =>
+        !forced || due <= now ? Why.Model : _forceBySignal ? Why.LaterSignal : Why.Sync;
 
     // 비우기는 세대가 지나도 버리지 않는다. 새 판 직후 전투 이탈이 겹치면 비우기가 곧바로
     // 낡는데, 버리면 지난 판 페이지가 새 판에 남는다.
@@ -315,7 +410,10 @@ internal static partial class OverlaySchedule
         _ => 0,
     };
 
-    private static void Release(Scheduled s, long now, Action<string> line, Action<int> page, Action clear)
+    // planned: 모델 예약값(DueUs/FloorUs)이 실제로 있는 해제인지. 게이트 해제는 예약 없이 바로 나간다.
+    private static void Release(Scheduled s, long now, Action<string> line, Action<int> page, Action clear,
+                                Why why, long cause = Null, long leader = Null, long resolvedUs = Null,
+                                bool planned = true)
     {
         Item item = s.Item;
         switch (item.Signal)
@@ -323,11 +421,12 @@ internal static partial class OverlaySchedule
             case Signal.Line: line(item.Text!); break;
             case Signal.Page: page(item.Round); break;
             case Signal.Clear: clear(); break;
-            case Signal.Advance: return;
-            case Signal.Sync:
-                // 여기서 재면 신호 자체의 대기(항상 한 프레임)만 나온다. 예약할 때 synclead로 남긴다.
-                return;
         }
+        Decide(Act.Release, item, why, cause, leader, planned ? s.DueUs : Null, planned ? s.FloorUs : Null,
+               resolvedUs, now);
+        if (item.Signal is Signal.Line or Signal.Page) ScheduleHealth.Displayed(item.Generation, now - item.ReceivedUs);
+        // 동기화는 여기서 재면 신호 자체의 대기(항상 한 프레임)만 나온다. 예약할 때 synclead로 남긴다.
+        if (item.Signal is Signal.Advance or Signal.Sync) return;
 
         if (!TraceTiming || item.Group == _lastTracedGroup) return;
         _lastTracedGroup = item.Group;
@@ -336,5 +435,10 @@ internal static partial class OverlaySchedule
                           + $"waited={(now - item.ReceivedUs) / 1000}ms speed={item.Speed:0.##}");
     }
 
-    public static void Mark() => TimingTrace.Write($"mark speed={Volatile.Read(ref _speed):0.##}");
+    // F10 표식. 화면 정확도의 독립 증거가 아니라 참고 표시다(docs/TIMING-REPLAY-HANDOFF.md 3절 6).
+    public static void Mark()
+    {
+        TimingTrace.Write($"mark speed={Volatile.Read(ref _speed):0.##}");
+        if (_recording) Emit(new ReplayRecord { Type = (byte)Rec.Mark, A = Volatile.Read(ref _nowUs) });
+    }
 }

@@ -21,6 +21,8 @@ internal static partial class OverlaySchedule
     // 오브젝트 포인터는 씬이 바뀌면 재사용될 수 있어 판 세대가 아니라 씬에 묶는다.
     public static void ForgetBanner()
     {
+        _touched = true;
+        if (_recording) EmitEnv(Env.ForgetBanner);
         TopOnUs.Clear();
         TopVotes.Clear();
         TopOnCount.Clear();
@@ -32,7 +34,7 @@ internal static partial class OverlaySchedule
     private static Gate TurnGate(Item item, long seq)
     {
         if (_banner != IntPtr.Zero) return Gate.Turn;
-        Unconsumed.Add(new Ledger { Gate = Gate.Turn, Seq = seq, ReceivedUs = item.ReceivedUs });
+        Unconsumed.Add(new Ledger { Gate = Gate.Turn, Seq = seq, ReceivedUs = item.ReceivedUs, ItemId = item.Id });
         return Gate.None;
     }
 
@@ -44,6 +46,7 @@ internal static partial class OverlaySchedule
             if (e.Gate == Gate.Round && e.Res == Resolution.None && e.Item.ReceivedUs < atUs) page = e;
         if (page is null)
         {
+            Stray(atUs);
             GateTrace("stray kind=round");
             return;
         }
@@ -91,6 +94,7 @@ internal static partial class OverlaySchedule
             Unconsumed.RemoveAt(i);
             seen--;
         }
+        Note(Diag.BannerLearned);
         GateTrace($"banner learned owed={Unconsumed.FindAll(l => l.Gate == Gate.Turn).Count}");
     }
 
@@ -107,11 +111,13 @@ internal static partial class OverlaySchedule
         if (owed is not null && (turn is null || owed.Seq < turn.Seq))
         {
             Unconsumed.Remove(owed);
+            Note(Diag.Consume, owed.ItemId);
             GateTrace("consume kind=turn");
             return;
         }
         if (turn is null)
         {
+            Stray(atUs);
             GateTrace("stray kind=turn");
             return;
         }
@@ -124,6 +130,6 @@ internal static partial class OverlaySchedule
     {
         _barrier = null;
         ResolveOlder(e.Seq, atUs);
-        Resolve(e, Resolution.Signal, atUs);
+        Resolve(e, Resolution.Signal, atUs, Why.OwnSignal);
     }
 }

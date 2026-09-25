@@ -64,8 +64,13 @@ class Program
     static byte[] Cause(long source, long id) =>
         Frame.Msg(2, Frame.Cat(Frame.Varint(1, (ulong)source), Frame.Fix64(3, id)));
 
-    static void Main()
+    static void Main(string[] args)
     {
+        // 재생 기록 검증용 자식 프로세스 모드(sched / scenario / replay). 사람이 직접 재생할 때도 쓴다:
+        //   harness replay <기록.jsonl> [--lenient]
+        //   harness compare <기록.jsonl>   (다른 스케줄러 버전의 기록에 현재 규칙을 돌려 공개 시각 차이를 본다)
+        if (args.Length > 0) Environment.Exit(ReplayTests.ChildMain(args));
+
         string dir = Path.GetTempPath() + "apbl-h";
         Directory.CreateDirectory(dir);
         string namesPath = Path.Combine(dir, "names.tsv");
@@ -505,6 +510,9 @@ class Program
         if (!stamped) fails++;
         fl.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 3));   // 닫은 뒤: 예외 없이 무시
         Console.WriteLine("  OK   F3 닫은 뒤 넣어도 예외 없음");
+
+        fails += HealthTests.Run();
+        fails += ReplayTests.Run(dir);
         Environment.Exit(fails);
     }
 }

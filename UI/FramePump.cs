@@ -71,8 +71,15 @@ internal static class FramePump
         try
         {
             OverlaySchedule.Tick(delta, maxDelta, scale);
-            if (OverlaySchedule.TraceTiming && Input.GetKeyDown(KeyCode.F10)) OverlaySchedule.Mark();
+            if ((OverlaySchedule.TraceTiming || OverlaySchedule.Recording) && Input.GetKeyDown(KeyCode.F10))
+                OverlaySchedule.Mark();
             OverlaySchedule.Pump(ShowLine, ShowPage, ClearOverlay);
+        }
+        catch { }
+
+        try
+        {
+            ScreenCandidates.Pump(OverlaySchedule.NowUs, OverlaySchedule.Generation);
         }
         catch { }
     }
