@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
 
     <!-- 본인 게임의 BepInEx 폴더 위치에 맞게 수정 -->
     <BepInExDir>D:\SteamLibrary\steamapps\common\Astral Party\8vJXnINT\BepInEx</BepInExDir>
