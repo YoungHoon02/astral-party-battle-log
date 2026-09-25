@@ -59,8 +59,8 @@ static class ReplayTests
         int fails = Sched.Run();
         sw.Stop();
         if (w is not null) OverlaySchedule.Shutdown(unload: false);
-        Console.WriteLine($"#stat emitted={OverlaySchedule.EmittedRecords} ms={sw.ElapsedMilliseconds} "
-                          + $"maxQueue={w?.MaxQueueDepth ?? 0} bytes={(file is null ? 0 : new FileInfo(file).Length)}");
+        Console.WriteLine($"#stat ms={sw.ElapsedMilliseconds} maxQueue={w?.MaxQueueDepth ?? 0} "
+                          + $"bytes={(file is null ? 0 : new FileInfo(file).Length)}");
         return fails;
     }
 
@@ -194,8 +194,7 @@ static class ReplayTests
         var on = Child("sched", sched);
         Check(off.Code == 0 && on.Code == 0, "RP1 기존 하네스가 기록 off/on 모두 통과", $"exit {off.Code}/{on.Code}");
         Check(WithoutStats(off.Out) == WithoutStats(on.Out), "RP1 기록 off/on의 하네스 출력이 같다");
-        Check(Stat(off.Out, "emitted") == "0", "RP1 기록 off에서는 레코드를 하나도 만들지 않는다", $"emitted={Stat(off.Out, "emitted")}");
-        Console.WriteLine($"       비용: off {Stat(off.Out, "ms")}ms / on {Stat(on.Out, "ms")}ms, 레코드 {Stat(on.Out, "emitted")}건, "
+        Console.WriteLine($"       비용: off {Stat(off.Out, "ms")}ms / on {Stat(on.Out, "ms")}ms, "
                           + $"파일 {Stat(on.Out, "bytes")} bytes, writer 큐 최대 {Stat(on.Out, "maxQueue")}");
 
         var replay = Child("replay", sched);
@@ -430,7 +429,7 @@ static class ReplayTests
         w1.Add(HeaderRec());
         for (int i = 0; i < 50; i++) w1.Add(MarkRec(i));
         full.Open.Set();
-        w1.Close("normal", false, 5000);
+        w1.Close("normal", 5000);
         string e1 = EndOf(full);
         Check(w1.Dropped > 0 && e1.Contains("\"reason\":\"incomplete\""), "WR1 큐가 차면 게임 스레드는 기다리지 않고 버린 수를 end에 남긴다",
               $"dropped={w1.Dropped}");
@@ -442,7 +441,7 @@ static class ReplayTests
         w2.Add(HeaderRec());
         SpinWait.SpinUntil(() => w2.BytesWritten > 0, 2000);
         for (int i = 0; i < 5; i++) w2.Add(MarkRec(i));
-        w2.Close("normal", false, 5000);
+        w2.Close("normal", 5000);
         string e2 = EndOf(flaky);
         Check(w2.IoFailed && e2.Contains("\"ioFailed\":true"), "WR2 중간 배치 쓰기 실패는 뒤이은 쓰기(end)가 성공해도 실패로 남는다", e2.Length > 90 ? e2[..90] + "…" : e2);
         Check(warns.Any(s => s.Contains("write failed")), "WR2 쓰기 예외를 삼키지 않고 경고한다");
@@ -453,7 +452,7 @@ static class ReplayTests
         var w3 = new ReplayWriter(small, OverlaySchedule.FormatRecord, warns.Add, maxBytes: 700);
         w3.Add(HeaderRec());
         for (int i = 0; i < 20; i++) w3.Add(MarkRec(i));
-        w3.Close("normal", false, 5000);
+        w3.Close("normal", 5000);
         int smallBytes = small.ToArray().Length;
         Check(EndOf(small).Contains("\"reason\":\"incomplete\"") && smallBytes <= 700,
               "WR3 용량 상한에 닿으면 앞부분을 덮지 않고 계측을 멈춘 뒤 불완전 end로 닫는다", $"{smallBytes} bytes");
@@ -474,13 +473,17 @@ static class ReplayTests
         snap = Snapshot(live, "\"pumpId\":2,\"observedGen\"");
         Check(ReplayCheck.Verify(Encoding.UTF8.GetBytes(snap)).Problems.Count == 0 && snap.Split('\n').Count(l => l.Contains("\"type\":\"end\"")) == 1,
               "WR5 다음 쓰기는 임시 end를 덮어써 end가 하나만 남는다");
-        w5.Close("normal", false, 5000);
-        Check(EndOf(live).Contains("\"reason\":\"normal\""), "WR5 정상 종료 때는 최종 end로 바뀐다");
+        w5.Add(PumpRec(7, 3));
+        w5.Close("normal", 5000);
+        string liveText = Encoding.UTF8.GetString(live.ToArray());
+        Check(EndOf(live).Contains("\"reason\":\"normal\"") && !liveText.Contains("\"pumpId\":3")
+              && ReplayCheck.Verify(live.ToArray()).Problems.Count == 0,
+              "WR5 정상 종료 때는 최종 end로 바뀌고, 닫는 순간 진행 중이던 Pump는 파일에 남기지 않는다");
 
         var stuck = new GateStream();
         var w4 = new ReplayWriter(stuck, OverlaySchedule.FormatRecord, warns.Add);
         w4.Add(HeaderRec());
-        bool closed = w4.Close("normal", false, 200);
+        bool closed = w4.Close("normal", 200);
         Check(!closed, "WR4 종료 제한 시간 안에 flush가 안 끝나면 정상 end를 보장하지 않는다");
         Rejects(stuck.ToArray(), "WR4 그 파일은 재검사에서 거부된다", "end 없음");
         stuck.Open.Set();

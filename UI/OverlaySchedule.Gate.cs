@@ -94,7 +94,6 @@ internal static partial class OverlaySchedule
         bool rec = _recording;
         if (rec)
         {
-            RecEnter();
             EmitEnv(Env.Fallback);
             BeginProcessing();
         }
@@ -126,11 +125,7 @@ internal static partial class OverlaySchedule
         }
         finally
         {
-            if (rec)
-            {
-                EndProcessing();
-                RecExit();
-            }
+            if (rec) EndProcessing();
         }
     }
 
@@ -186,9 +181,7 @@ internal static partial class OverlaySchedule
             TakeSignal(s);
             if (s.Generation != _gateGeneration)
             {
-                _cause = s.Id;
                 ScheduleHealth.Count(HealthCount.StaleSignal);
-                Note(Diag.StaleSignal);
                 continue;
             }
             _cause = s.Id;

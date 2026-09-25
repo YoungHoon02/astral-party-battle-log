@@ -17,8 +17,6 @@ internal static partial class OverlaySchedule
     internal readonly record struct SignalIn(
         long Id, long AtUs, int Gen, string Kind, int Pip, bool On, long InstanceId);
 
-    internal static long EmittedRecords => Interlocked.Read(ref _emitted);
-
     internal static class ReplayPort
     {
         private static readonly Action<string> NoLine = _ => { };

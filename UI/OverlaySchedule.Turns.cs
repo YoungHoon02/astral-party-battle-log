@@ -94,7 +94,6 @@ internal static partial class OverlaySchedule
             Unconsumed.RemoveAt(i);
             seen--;
         }
-        Note(Diag.BannerLearned);
         GateTrace($"banner learned owed={Unconsumed.FindAll(l => l.Gate == Gate.Turn).Count}");
     }
 

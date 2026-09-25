@@ -302,15 +302,18 @@ README·검증 문서의 문구는 결정 뒤에 맞춘다. 현재 문구는 "�
   - 알려진 한계: `FallBackToModel`은 닫는 레코드가 없어, 그 결정 도중에 끊긴 checkpoint는 재생 불일치로 나온다.
     폴백은 실행당 많아야 한 번(후킹 실패·자체 비활성)이다.
 - **종료.** 프로세스 종료(`ProcessExit`)는 세대를 바꾸지 않는다. 바꾸면 메인 스레드 Pump와 겹쳐 정상 종료 기록이
-  모두 경합으로 거부된다. 언로드는 기존처럼 `Discard`한다. 종료는 진행 중 계측 호출을 1초까지 기다리고,
-  writer flush를 2초까지 기다린다.
+  모두 경합으로 거부된다. 언로드는 기존처럼 `Discard`한다. 닫을 때는 마지막으로 닫힌 Pump 구간까지만 쓰므로
+  진행 중인 계측 호출을 기다리지 않는다. 그 뒤 도착한 레코드는 end 뒤라 버린다(유실로 세지 않는다).
+  writer flush는 2초까지 기다리고, 못 끝내면 마지막 임시 end가 남는다.
 - **폐기 사유.** `drop`의 사유는 그 줄의 세대를 끝낸 변경(`reset`/`discard`)이고, 기록에 그 변경이 없으면 `stale`이다.
 - **일반 줄의 해제 사유.** 모델 기한 = `model`, 동기화가 앞당김 = `sync`, 화면 신호가 앞당김 = `later-signal`
   (`causeRef`에 그 신호), 반격 전 5036 처리 = `counter-sync`, 큐 예산 = `budget`. 게이트 해제는 `resolve`의
   사유를 그대로 쓰고 `dueUs`/`floorUs`는 null, `resolvedUs`와 `releasedUs`를 따로 둔다.
 - **FallBackToModel 결정**은 Pump 밖이라 `pumpId`가 null이다. 경합 여부는 end의 `overlap`에 남는다.
-- **추가한 필드·종류.** `diagnostic`에 `pumpId`를 둔다. 진단 종류에 `banner-learned`, `stale-signal`(세대 불일치
-  신호 폐기)을 더했다.
+- **추가한 필드.** `diagnostic`에 `pumpId`를 둔다. 진단 종류는 5절의 7가지만 쓴다. 세대 불일치로 버린 신호는
+  `signal-take`만 남고 건강 요약의 `stale-signal`로 센다.
+- **스케줄러 버전.** 1 = 최초 구현, 2 = PK 창 열림 규칙(SIGNAL-GATING.md 1절 "창 열림"), 3 = 진단 종류 정리
+  (결정은 2와 같다). 이전 버전 기록은 비교 모드로 본다.
 - **instanceId.** 포인터 0은 0으로 둔다(배너 미학습 판정이 `IntPtr.Zero` 비교라 뜻이 겹친다). 나머지는 1부터.
 - **용량.** writer 큐 65,536건, 파일 512MiB, 인스턴스 표 65,536개.
 
@@ -324,13 +327,14 @@ README·검증 문서의 문구는 결정 뒤에 맞춘다. 현재 문구는 "�
 ```text
 [health] game#2 start=reset end=left gates(made res:s/l/c/b shown:s/l/c/b open) dice=12 11/1/0/0 11/1/0/0 0 pk=… round=… turn=…
   | signals dice=30 window=16 hit=40 round=4 top=50 | diag stray=… consume=… weak-settle=… weak-orphan=… extra-strike=… outside=… counter-held=…
-  | hook=installed mode=screen changes=0 moved=0 | loss name=… path=… line=… cand-overwrite=… str-table=… analysis-drop=… stale-signal=…
+  | hook=installed mode=screen changes=0 moved=0 | loss name=… path=… line=… cand-overwrite=… str-table=… analysis-drop=… stale-signal=… run-trailing=…
   replay=…(provisional) | clock unity=… fallback=… speed 1x=… maxQueue=… maxWait=…ms
 ```
 
 (실제로는 한 줄이다.) `s/l/c/b`는 자기 신호(창 닫힘 포함)·늦은 경로·상한·큐 예산이다. `open`은 닫힐 때 아직
-해결되지 않은 게이트 수다. `moved`는 모델 폴백으로 넘어간 미해결 게이트 수다. 실행 끝에는 `[health] run end`
-한 줄에 관측 밖 입력 수(`trailing`)와 writer 최종 상태, 후보 버퍼 상태를 남긴다.
+해결되지 않은 게이트 수다. `moved`는 모델 폴백으로 넘어간 미해결 게이트 수다. `run-trailing`은 어느 관측에도
+속하지 않은 입력의 실행 누계다(닫힌 판의 후행 입력 등). 종료 처리가 불리면 `[health] run end` 한 줄에 같은 누계와
+writer 최종 상태, 후보 버퍼 상태를 남기지만, 게임을 끌 때는 대개 불리지 않아 게임 요약 줄에도 누계를 둔다.
 
 ### 후보 버퍼 상수
 

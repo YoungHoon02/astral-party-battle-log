@@ -19,14 +19,27 @@ internal enum HookState { None, Installed, Failed, Disabled }
 // 관측 수명과 해석 규칙은 docs/TIMING-REPLAY-HANDOFF.md 5절.
 internal static class ScheduleHealth
 {
-    public const int GateKinds = 4;       // dice, pk, round, turn
-    public const int ResolveKinds = 4;    // signal, late, cap, budget
-    public const int SignalKinds = 5;     // ScreenSignal 순서
+    private const int GateKinds = 4;       // dice, pk, round, turn
+    private const int ResolveKinds = 4;    // signal, late, cap, budget
+    private const int SignalKinds = 5;     // ScreenSignal 순서
     private const long SpeedSampleUs = 1_000_000;
 
     private static readonly string[] GateNames = { "dice", "pk", "round", "turn" };
     private static readonly string[] SignalNames = { "dice", "window", "hit", "round", "top" };
     private static readonly int CountKinds = Enum.GetValues(typeof(HealthCount)).Length;
+
+    private static readonly (HealthCount Count, string Name)[] DiagFields =
+    {
+        (HealthCount.Stray, "stray"), (HealthCount.Consume, "consume"), (HealthCount.WeakSettle, "weak-settle"),
+        (HealthCount.WeakOrphan, "weak-orphan"), (HealthCount.ExtraStrike, "extra-strike"),
+        (HealthCount.Outside, "outside"), (HealthCount.CounterHeld, "counter-held"),
+    };
+    private static readonly (HealthCount Count, string Name)[] LossFields =
+    {
+        (HealthCount.NameBudget, "name"), (HealthCount.PathBudget, "path"), (HealthCount.LineBudget, "line"),
+        (HealthCount.CandidateOverwrite, "cand-overwrite"), (HealthCount.StringTableFull, "str-table"),
+        (HealthCount.AnalysisDrop, "analysis-drop"), (HealthCount.StaleSignal, "stale-signal"),
+    };
 
     private sealed class Observation
     {
@@ -62,11 +75,6 @@ internal static class ScheduleHealth
             _write = write;
             _replayState = replayState;
         }
-    }
-
-    public static int ActiveNumber
-    {
-        get { lock (Sync) return _active?.Number ?? 0; }
     }
 
     public static long Trailing
@@ -243,21 +251,17 @@ internal static class ScheduleHealth
         sb.Append(" | signals");
         for (int k = 0; k < SignalKinds; k++) sb.Append(' ').Append(SignalNames[k]).Append('=').Append(o.Signals[k]);
         sb.Append(" | diag");
-        Counts(sb, o.Counts, HealthCount.Stray, "stray", HealthCount.Consume, "consume",
-               HealthCount.WeakSettle, "weak-settle", HealthCount.WeakOrphan, "weak-orphan",
-               HealthCount.ExtraStrike, "extra-strike", HealthCount.Outside, "outside",
-               HealthCount.CounterHeld, "counter-held");
+        Fields(sb, o.Counts, DiagFields);
         sb.Append(" | hook=").Append(_hook.ToString().ToLowerInvariant())
           .Append(" mode=").Append(_gating ? "screen" : "model")
           .Append(" changes=").Append(o.Counts[(int)HealthCount.HookChanges])
           .Append(" moved=").Append(o.Counts[(int)HealthCount.FallbackMoved]);
         sb.Append(" | loss");
-        Counts(sb, o.Counts, HealthCount.NameBudget, "name", HealthCount.PathBudget, "path",
-               HealthCount.LineBudget, "line", HealthCount.CandidateOverwrite, "cand-overwrite",
-               HealthCount.StringTableFull, "str-table", HealthCount.AnalysisDrop, "analysis-drop",
-               HealthCount.StaleSignal, "stale-signal");
-        // 게임 요약 시점의 writer 상태는 잠정이다. 최종 상태는 기록 파일의 end와 run end 줄에 남는다.
-        sb.Append(" replay=").Append(_replayState?.Invoke() ?? "off").Append("(provisional)");
+        Fields(sb, o.Counts, LossFields);
+        // 게임을 끌 때 종료 처리가 오지 않아 run end 줄은 실게임에서 거의 찍히지 않는다. 관측 밖 입력은 실행 누계로
+        // 여기 함께 남긴다. writer 상태는 잠정이고 최종 상태는 기록 파일의 end에 남는다.
+        sb.Append(" run-trailing=").Append(_trailing)
+          .Append(" replay=").Append(_replayState?.Invoke() ?? "off").Append("(provisional)");
         sb.Append(" | clock unity=").Append(o.Counts[(int)HealthCount.UnityClock])
           .Append(" fallback=").Append(o.Counts[(int)HealthCount.FallbackClock])
           .Append(" speed");
@@ -278,9 +282,8 @@ internal static class ScheduleHealth
         }
     }
 
-    private static void Counts(StringBuilder sb, long[] counts, params object[] pairs)
+    private static void Fields(StringBuilder sb, long[] counts, (HealthCount Count, string Name)[] fields)
     {
-        for (int i = 0; i < pairs.Length; i += 2)
-            sb.Append(' ').Append((string)pairs[i + 1]).Append('=').Append(counts[(int)(HealthCount)pairs[i]]);
+        foreach ((HealthCount c, string name) in fields) sb.Append(' ').Append(name).Append('=').Append(counts[(int)c]);
     }
 }

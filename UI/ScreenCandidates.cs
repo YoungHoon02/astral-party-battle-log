@@ -69,6 +69,7 @@ internal static class ScreenCandidates
     private static readonly Queue<long> BudgetMarks = new();
     private static readonly Queue<long> BoundaryMarks = new();
     private static long _marksLostBeforeUs = long.MinValue;
+    private static long _lastBudgetUs = long.MinValue;
     private static int _lastGeneration = int.MinValue;
     private static int _events;
     private static Action<string>? _report;
@@ -139,8 +140,6 @@ internal static class ScreenCandidates
     }
 
     public static void Boundary(long atUs) => Mark(BoundaryMarks, atUs);
-
-    private static long _lastBudgetUs = long.MinValue;
 
     public static void Gap(GapKind kind, string what, long fromUs, long toUs)
     {

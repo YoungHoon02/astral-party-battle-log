@@ -159,7 +159,6 @@ internal static partial class OverlaySchedule
     {
         _touched = true;
         bool rec = _recording;
-        if (rec) RecEnter();
         long control = rec ? BeginChange() : Null;
         try
         {
@@ -171,11 +170,7 @@ internal static partial class OverlaySchedule
         }
         finally
         {
-            if (rec)
-            {
-                EndChange();
-                RecExit();
-            }
+            if (rec) EndChange();
         }
     }
 
@@ -183,7 +178,6 @@ internal static partial class OverlaySchedule
     {
         _touched = true;
         bool rec = _recording;
-        if (rec) RecEnter();
         long control = rec ? BeginChange() : Null;
         try
         {
@@ -193,11 +187,7 @@ internal static partial class OverlaySchedule
         }
         finally
         {
-            if (rec)
-            {
-                EndChange();
-                RecExit();
-            }
+            if (rec) EndChange();
         }
     }
 

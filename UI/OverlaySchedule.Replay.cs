@@ -13,7 +13,7 @@ namespace AstralPartyBattleLog.UI;
 internal static partial class OverlaySchedule
 {
     // 결정 로직(게이트·모델·장부·장벽·상한)을 바꾸면 올린다. 재생기는 모르는 버전을 거부한다.
-    public const int SchedulerVersion = 2;
+    public const int SchedulerVersion = 3;
     public const int ReplayFormat = 1;
     private const long Null = ReplayRecord.Null;
     private const int MaxInstances = 65536;
@@ -35,7 +35,7 @@ internal static partial class OverlaySchedule
 
     private enum Diag : byte
     {
-        Stray, Consume, WeakSettle, WeakOrphan, ExtraStrike, Outside, CounterHeld, BannerLearned, StaleSignal,
+        Stray, Consume, WeakSettle, WeakOrphan, ExtraStrike, Outside, CounterHeld,
     }
 
     private static readonly string[] RecNames =
@@ -55,7 +55,6 @@ internal static partial class OverlaySchedule
     private static readonly string[] DiagNames =
     {
         "stray", "consume", "weak-settle", "weak-orphan", "extra-strike", "outside", "counter-held",
-        "banner-learned", "stale-signal",
     };
     private static readonly string[] OutputNames = { "none", "line", "page", "clear" };
 
@@ -64,14 +63,8 @@ internal static partial class OverlaySchedule
     // 스케줄러 상태를 한 번이라도 바꿨으면 기록 시작이 clean이 아니다.
     private static bool _touched;
 
-    // 종료 때 진행 중인 계측 호출이 끝나기를 기다리려고 센다. 한 호출 안에서는 스레드별 깊이로 중첩을 푼다.
-    private static int _recActive;
-    private static int _recClosing;
-    [ThreadStatic] private static int _recDepth;
-    [ThreadStatic] private static bool _recLive;
-
     private static long _itemIds, _signalIds, _controlIds, _pumpIds;
-    private static long _emitted, _instanceIds;
+    private static long _instanceIds;
     private static int _shutdown;
     private static long _pumpId = Null;
     private static long _cause = Null;
@@ -111,7 +104,7 @@ internal static partial class OverlaySchedule
     public static string ReplayState() => _sink is ReplayWriter w
         ? $"dropped={w.Dropped} io={(w.IoFailed ? "failed" : "ok")} stopped={(w.Stopped ? 1 : 0)} "
           + $"overlap={Volatile.Read(ref _overlap)} maxQueue={w.MaxQueueDepth} bytes={w.BytesWritten}"
-        : _recording ? "memory" : "off";
+        : "off";
 
     // 언로드는 기존처럼 대기 줄을 버린다. 프로세스 종료에서는 세대를 바꾸지 않는다 — 메인 스레드의 Pump와
     // 겹쳐 정상 종료 기록이 모두 경합으로 거부되기 때문이다.
@@ -120,14 +113,8 @@ internal static partial class OverlaySchedule
         if (Interlocked.Exchange(ref _shutdown, 1) != 0) return;
         ScheduleHealth.Close(unload ? "unload" : "exit");
         if (unload) Discard();
-        if (_recording)
-        {
-            Interlocked.Exchange(ref _recClosing, 1);
-            bool quiet = SpinWait.SpinUntil(() => Volatile.Read(ref _recActive) == 0, 1000);
-            if (_sink is ReplayWriter w
-                && !w.Close(quiet ? (unload ? "unload" : "normal") : "incomplete", Volatile.Read(ref _overlap) != 0, 2000))
-                TimingTrace.Warn("[replay] could not write the final end in time; the file keeps its last checkpoint");
-        }
+        if (_sink is ReplayWriter w && !w.Close(unload ? "unload" : "normal", 2000))
+            TimingTrace.Warn("[replay] could not write the final end in time; the file keeps its last checkpoint");
         ScheduleHealth.RunEnd(unload ? "unload" : "exit");
     }
 
@@ -144,33 +131,8 @@ internal static partial class OverlaySchedule
         EmitEnv(op);
     }
 
-    private static bool RecEnter()
-    {
-        if (_recDepth++ > 0) return _recLive;
-        Interlocked.Increment(ref _recActive);
-        _recLive = Volatile.Read(ref _recClosing) == 0;
-        if (!_recLive) Interlocked.Decrement(ref _recActive);
-        return _recLive;
-    }
-
-    private static void RecExit()
-    {
-        if (--_recDepth > 0) return;
-        if (_recLive) Interlocked.Decrement(ref _recActive);
-        _recLive = false;
-    }
-
-    private static void Emit(ReplayRecord r)
-    {
-        Interlocked.Increment(ref _emitted);
-        if (_recDepth > 0)
-        {
-            if (_recLive) _sink!.Add(r);
-            return;
-        }
-        if (RecEnter()) _sink!.Add(r);
-        RecExit();
-    }
+    // 호출하는 쪽이 _recording을 먼저 본다. 기록을 끄면 레코드 구조체도 만들지 않는다.
+    private static void Emit(ReplayRecord r) => _sink!.Add(r);
 
     // 변경 쪽은 진행 중 표시를 먼저 올리고 횟수를 센다. 처리 쪽은 횟수를 먼저 읽고 진행 중 표시를 읽는다.
     // 그래야 처리 시작 직후에 시작한 변경을 시작 시점 검사에서 놓쳐도 종료 시점 횟수 비교에서 잡힌다.
@@ -200,7 +162,6 @@ internal static partial class OverlaySchedule
 
     private static void BeginPump(long now)
     {
-        RecEnter();
         BeginProcessing();
         _pumpId = ++_pumpIds;
         _cause = Null;
@@ -218,7 +179,6 @@ internal static partial class OverlaySchedule
             Type = (byte)Rec.PumpEnd, A = _pumpId, B = Volatile.Read(ref _generation), C = overlap ? 1 : 0,
         });
         _pumpId = Null;
-        RecExit();
     }
 
     private static void Control(long controlId, Why op, int genAfter)

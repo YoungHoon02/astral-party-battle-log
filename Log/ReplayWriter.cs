@@ -28,7 +28,8 @@ internal interface IReplaySink
 //
 // 게임을 끌 때 ProcessExit가 오지 않는다(실측 2026-09-26). 그래서 쓸 때마다 파일 끝에 임시 end(checkpoint)를
 // 붙여 두고, 다음에 쓸 때 그 자리부터 덮어쓴다. 프로세스가 언제 끝나도 마지막으로 쓴 지점까지는 닫힌 파일이다.
-// 임시 end는 Pump 구간 밖에서만 붙이고, 구간 안에서 끊긴 레코드는 다음 쓰기로 넘긴다.
+// 임시 end는 Pump 구간 밖에서만 붙이고, 구간 안에서 끊긴 레코드는 다음 쓰기로 넘긴다. 닫을 때도 마지막으로
+// 닫힌 구간까지만 쓰므로, 종료가 진행 중인 Pump와 겹쳐도 미완성 구간이 파일에 남지 않는다.
 internal sealed class ReplayWriter : IReplaySink
 {
     public const int DefaultCapacity = 65536;
@@ -61,7 +62,6 @@ internal sealed class ReplayWriter : IReplaySink
     private bool _stoppedEarly;
     private bool _completing;
     private string _endReason = "normal";
-    private bool _overlap;
     private int _maxDepth;
 
     // writer 스레드에서만 쓴다. _bytes·_count·해시는 임시 end를 뺀 데이터만 센다.
@@ -148,12 +148,11 @@ internal sealed class ReplayWriter : IReplaySink
     }
 
     // 제한 시간 안에 최종 end를 쓰지 못하면 false. 파일에는 마지막 임시 end가 남는다.
-    public bool Close(string reason, bool overlap, int waitMs)
+    public bool Close(string reason, int waitMs)
     {
         lock (_sync)
         {
             if (!_completing) _endReason = reason;
-            _overlap |= overlap;
             _closed = true;
             _completing = true;
             Monitor.Pulse(_sync);
@@ -256,13 +255,13 @@ internal sealed class ReplayWriter : IReplaySink
             }
         }
 
-        if (final || _pending.Length > MaxCarryBytes)
+        if (_pending.Length > MaxCarryBytes)
         {
             boundary = _pending.Length;
             boundaryCount = _pendingCount;
             boundarySeq = _pendingLastSeq;
         }
-        if (final) Commit((int)boundary, boundaryCount, boundarySeq, line, FinalReason());
+        if (final) Commit((int)Math.Max(boundary, 0), boundaryCount, boundarySeq, line, FinalReason());
         else if (boundary > 0 && !IoFailed) Commit((int)boundary, boundaryCount, boundarySeq, line, Checkpoint);
     }
 
@@ -311,14 +310,13 @@ internal sealed class ReplayWriter : IReplaySink
     private byte[] EndLine(StringBuilder line, string reason)
     {
         long dropped;
-        bool overlap, early;
+        bool early;
         lock (_sync)
         {
             dropped = _dropped;
-            overlap = _overlap;
             early = _stoppedEarly;
         }
-        overlap |= _liveOverlap?.Invoke() ?? false;
+        bool overlap = _liveOverlap?.Invoke() ?? false;
         bool failed = IoFailed;
         if (early || failed || dropped > 0) reason = "incomplete";
 
