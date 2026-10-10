@@ -1030,6 +1030,33 @@ PK(battle)만 예외다 — 머리줄은 공격자 이름인데 효과는 방어
 `ActionOverTimeLogS2C`는 타임아웃 기록용이다). 확인함 — 그래서 "행동이 끝났다"를
 알려면 다음 턴 시작을 기다리는 수밖에 없었다.
 
+## 릴리스 알림
+
+`Net/ReleaseCheck.cs`. 게임을 켤 때 한 번 새 릴리스가 있는지 확인해 BepInEx 로그와 오버레이
+머리줄(`새 버전 v0.3.3`)에 알리기만 한다. 내려받거나 교체하지 않는다 — 배포물이 `BepInEx/plugins/…`
+폴더라 실행 중 교체가 중간에 실패하면 게임이 아예 안 켜질 수 있다. AnimSpeed 모드와 같은 구조다.
+
+```
+publish-release.ps1 ─ 게시된 ZIP을 받아 sha256·크기 측정 ─> distribution 브랜치/release-index.json
+플러그인 ─ raw.githubusercontent.com/.../distribution/release-index.json ─> 버전 비교
+```
+
+- **`api.github.com`을 쓰지 않는다.** 미인증 IP당 시간당 60회라 공유기·PC방처럼 IP를 나눠 쓰는
+  곳에서 막힌다. raw는 CDN이라 제한이 사실상 없고 응답도 200바이트 남짓이다. 대신 5분 캐시가 있어
+  게시 직후 최대 5분은 이전 인덱스가 보인다. 그래서 인덱스는 **자산이 받아지는 것을 확인한 뒤에**
+  올린다 — 반대로 하면 알림을 보고 받으러 간 사람이 404를 본다.
+- **`distribution`은 인덱스 한 파일만 담는 브랜치다.** `main`에 두면 코드 커밋마다 CDN 캐시가
+  흔들리고 히스토리가 섞인다. 스크립트가 작업 트리를 건드리지 않고 git plumbing으로 커밋을 만들어
+  민다.
+- **인덱스를 믿지 않는다.** `schemaVersion`이 1이 아니거나, `downloadUrl`이 버전으로 다시 만든
+  주소와 글자 단위로 다르거나, `sha256`이 64자리 16진수가 아니거나, 크기가 0 이하면 알리지 않는다.
+  응답은 64KB까지만 읽는다. 어긋나면 BepInEx 로그에 `[update] release check skipped`만 남는다.
+- **게임 프로세스 안에서 돌지만 IL2CPP 쪽에 아무것도 등록하지 않는다.** .NET 런타임 스레드
+  하나에서 동기 `HttpClient.Send`를 쓴다(델리게이트·코루틴·`Task` 이어 붙이기 없음). 이 HTTP
+  연결은 .NET 쪽 소켓이라 우리가 후킹하는 `Il2CppSystem.Net.Sockets.Socket`을 지나지 않는다.
+- 어셈블리 버전은 `0.3.2.0`이고 인덱스는 `0.3.2`라 네 번째 자리를 버리고 비교한다.
+- 인덱스 형식은 AnimSpeed(`release-index.json` 스키마 1)와 같다. `notes`는 쓰지 않는다.
+
 ## 파일 기록 시점
 
 오버레이가 켜져 있으면 `battle-log.txt`는 **줄이 오버레이로 나가는 순간** 쓴다

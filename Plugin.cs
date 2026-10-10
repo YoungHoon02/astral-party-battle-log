@@ -107,6 +107,12 @@ public class Plugin : BasePlugin
 
         NameHarvest.Arm(Log, names, namesPath, rebuildNames.Value);
 
+        ConfigEntry<bool> checkRelease = Config.Bind(
+            "Update", "CheckRelease", true,
+            "게임을 켤 때 한 번 GitHub(raw.githubusercontent.com)에서 새 릴리스가 있는지 확인해 BepInEx 로그와 " +
+            "오버레이 머리줄에 알린다. 요청 하나만 보내며 계정·게임 정보는 싣지 않는다. 받거나 설치하지는 않는다.");
+        if (checkRelease.Value) ReleaseCheck.Start(Log);
+
         string cachePath = Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "roster-cache.tsv");
         var cache = new RosterCache(cachePath, Log.LogWarning);
 

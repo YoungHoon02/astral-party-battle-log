@@ -29,6 +29,7 @@
     <Compile Include="$(SrcDir)\Log\LogFileWriter.cs" />
     <Compile Include="$(SrcDir)\Net\FrameHeader.cs" />
     <Compile Include="$(SrcDir)\Net\FrameReassembler.cs" />
+    <Compile Include="$(SrcDir)\Net\ReleaseCheck.cs" />
     <Compile Include="$(SrcDir)\UI\OverlaySchedule.cs" />
     <Compile Include="$(SrcDir)\UI\OverlaySchedule.Gate.cs" />
     <Compile Include="$(SrcDir)\UI\OverlaySchedule.Turns.cs" />

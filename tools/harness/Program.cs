@@ -681,6 +681,31 @@ class Program
         Console.WriteLine("  OK   F3 닫은 뒤 넣어도 예외 없음");
         fails += Sched.FileTiming(Path.Combine(dir, "battle-log-sync.txt"));
 
+        Console.WriteLine();
+        Console.WriteLine("=== 릴리스 알림 인덱스 ===");
+        string Index(string version, string? url = null, int schema = 1, string sha = "ab12", long size = 1) =>
+            $"{{\"schemaVersion\":{schema},\"version\":\"{version}\",\"downloadUrl\":\""
+            + (url ?? $"https://github.com/{ReleaseCheck.Repository}/releases/download/v{version}/AstralPartyBattleLog-v{version}.zip")
+            + $"\",\"sha256\":\"{(sha == "ab12" ? new string('a', 64) : sha)}\",\"size\":{size}}}";
+        var running = new Version(0, 3, 2, 0);
+        string Verdict(string json)
+        {
+            try { return ReleaseCheck.Newer(System.Text.Encoding.UTF8.GetBytes(json), running) ?? "같거나 이전"; }
+            catch (InvalidDataException e) { return $"무시: {e.Message}"; }
+        }
+        void ExpectRelease(string label, string json, string want)
+        {
+            string got = Verdict(json);
+            bool ok = got == want;
+            Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} {label}: {got}");
+            if (!ok) fails++;
+        }
+        ExpectRelease("U1 더 새 버전이면 알림", Index("0.3.3"), "0.3.3");
+        ExpectRelease("U2 같은 버전(어셈블리 0.3.2.0)이면 알리지 않음", Index("0.3.2"), "같거나 이전");
+        ExpectRelease("U3 다른 주소를 가리키면 무시", Index("0.4.0", url: "https://example.com/x.zip"), "무시: unexpected download url");
+        ExpectRelease("U4 모르는 스키마는 무시", Index("0.4.0", schema: 2), "무시: unknown index schema");
+        ExpectRelease("U5 해시 형식이 틀리면 무시", Index("0.4.0", sha: "zz"), "무시: bad package digest");
+
         fails += HealthTests.Run();
         fails += ReplayTests.Run(dir);
         Environment.Exit(fails);

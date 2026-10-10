@@ -187,6 +187,10 @@ ZIP에는 BepInEx 로그, 이 플러그인의 설정과 전투 로그만 들어�
 정보가 함께 전달되지 않도록 캐릭터 이름만 사용합니다. 진단이 필요한 경우에만
 `LogPlayerIds` 설정으로 표시할 수 있습니다.
 
+**게임을 켤 때 한 번 새 버전을 확인합니다.** GitHub(`raw.githubusercontent.com`)에 요청 하나만
+보내며 계정·게임 정보는 싣지 않습니다. 새 버전이 있으면 오버레이 머리줄에 `새 버전 v…`로
+알리기만 하고 내려받거나 설치하지는 않습니다. `Update.CheckRelease = false`로 끌 수 있습니다.
+
 ## 설정
 
 `BepInEx/config/astralparty.battlelog.cfg` — 게임을 한 번 실행하면 만들어집니다.
@@ -209,6 +213,7 @@ ZIP에는 BepInEx 로그, 이 플러그인의 설정과 전투 로그만 들어�
 | `Output.LogCards` | true | 공개된 카드 기록 |
 | `Output.LogChat` | true | 빠른 대화와 핑 기록. 차단한 플레이어의 메시지도 서버는 보내므로 함께 남습니다 |
 | `Names.Rebuild` | false | 이름표를 다시 만듭니다 (게임 업데이트 후) |
+| `Update.CheckRelease` | true | 게임을 켤 때 한 번 새 릴리스가 있는지 확인해 BepInEx 로그와 오버레이 머리줄에 알립니다. 내려받거나 설치하지는 않습니다 |
 
 ## 개발 문서
 

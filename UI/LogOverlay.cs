@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using AstralPartyBattleLog.Net;
 using BepInEx.Logging;
 using UnityEngine;
 using UnityEngine.UI;
@@ -507,7 +508,8 @@ internal static class LogOverlay
 
         string position = total > MaxLines ? $"   {_offset + 1}-{_offset + shown}/{total}" : "";
         string hint = _following ? "" : "   (최신 아님)";
-        _header.text = $"Round {page.Round}{position}{hint}";
+        string release = ReleaseCheck.Latest is { } latest ? $"   새 버전 v{latest}" : "";
+        _header.text = $"Round {page.Round}{position}{hint}{release}";
 
         _text.text = string.Join("\n", page.Lines.Skip(_offset).Take(MaxLines));
     }
