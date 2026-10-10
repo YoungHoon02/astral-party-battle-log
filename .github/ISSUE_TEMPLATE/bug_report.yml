@@ -1,0 +1,41 @@
+name: 버그 제보
+description: 로그가 틀리거나 빠졌을 때, 오버레이가 이상할 때, 게임이 멈추거나 꺼질 때
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        문제가 난 직후, **게임을 다시 켜기 전에** `BepInEx/plugins/AstralPartyBattleLog/collect-report.bat`을 실행해
+        진단 ZIP을 만들어 주세요. 게임을 다시 켜면 이전 실행의 BepInEx 로그가 지워집니다.
+  - type: textarea
+    id: what
+    attributes:
+      label: 무슨 일이 있었나요
+      description: 기대한 것과 실제로 본 것. 로그 줄이 틀렸다면 그 줄을 그대로 붙여 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: when
+    attributes:
+      label: 언제 일어났나요
+      description: 모드(봇전·매칭·사용자 방), 맵, 몇 라운드쯤, 어떤 캐릭터·행동 직후였는지
+  - type: input
+    id: version
+    attributes:
+      label: 플러그인 버전
+      description: 진단 ZIP의 report.txt 첫 줄에도 있습니다
+      placeholder: 0.3.2
+  - type: textarea
+    id: report
+    attributes:
+      label: 진단 ZIP
+      description: reports/ 폴더의 AstralPartyBattleLog-report-*.zip을 여기에 끌어다 놓아 주세요.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 확인
+      options:
+        - label: ZIP을 열어 공유해도 되는 내용인지 확인했습니다
+          required: true

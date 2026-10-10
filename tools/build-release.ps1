@@ -25,7 +25,9 @@ $files = @(
     @{ Source = $dll; Entry = 'BepInEx/plugins/AstralPartyBattleLog/AstralPartyBattleLog.dll' },
     @{ Source = (Join-Path $root 'release/USER_AGREEMENT.md'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/USER_AGREEMENT.md' },
     @{ Source = (Join-Path $root 'release/HOW_TO_INSTALL.md'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/HOW_TO_INSTALL.md' },
-    @{ Source = (Join-Path $root 'LICENSE'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/LICENSE' }
+    @{ Source = (Join-Path $root 'LICENSE'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/LICENSE' },
+    @{ Source = (Join-Path $root 'release/collect-report.bat'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/collect-report.bat' },
+    @{ Source = (Join-Path $root 'release/collect-report.ps1'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/collect-report.ps1' }
 )
 
 Add-Type -AssemblyName System.IO.Compression

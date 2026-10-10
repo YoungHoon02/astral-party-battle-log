@@ -147,6 +147,17 @@ BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성�
 
 제거하려면 게임을 종료한 뒤 `BepInEx/plugins/AstralPartyBattleLog/` 폴더를 삭제합니다.
 
+## 버그 제보
+
+1. 문제가 난 직후, **게임을 다시 켜기 전에** `BepInEx/plugins/AstralPartyBattleLog/collect-report.bat`을
+   실행합니다. 게임을 다시 켜면 이전 실행의 BepInEx 로그가 지워집니다.
+2. 같은 폴더의 `reports/`에 `AstralPartyBattleLog-report-*.zip`이 만들어지고 탐색기가 열립니다.
+3. ZIP을 열어 내용을 한 번 확인한 뒤 [이슈](../../issues/new/choose)에 첨부해 주세요.
+
+ZIP에는 BepInEx 로그, 이 플러그인의 설정과 전투 로그만 들어갑니다. 사용자 폴더 경로와 계정
+식별자는 가리고, 재접속 캐시·재생 기록·Unity 로그는 넣지 않습니다. 넣은 것과 뺀 것은 ZIP 안의
+`report.txt`에 적혀 있습니다.
+
 ## 알아둘 것
 
 파일 로그는 서버에서 전투 결과를 받는 즉시 기록하므로 게임 애니메이션보다 먼저 남을 수 있습니다.

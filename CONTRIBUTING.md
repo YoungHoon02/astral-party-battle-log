@@ -93,6 +93,26 @@ grep -n 'TryReadString' Log/Roster.cs
 계정 식별자는 넣지 않지만 게임 진행 시각이 담기고, 경로 가림(`ScreenRecorder.Mask`)은 비ASCII·6자리 이상 숫자·
 알려진 카메라 접미사만 가리는 휴리스틱이라 다른 모양의 식별 정보가 남을 수 있습니다.
 
+### 진단 번들
+
+사용자가 버그를 제보할 때는 플러그인 폴더의 `collect-report.bat`(`release/collect-report.ps1`)이 만든 ZIP을
+받습니다. 가리는 규칙을 늘리기보다 **넣을 파일을 정해 두는 방식**으로 만듭니다. 위 원칙과 같습니다 — 남기지
+않은 것은 가릴 필요가 없습니다.
+
+| | 번들 | 이유 |
+| --- | --- | --- |
+| `LogOutput.log` | 넣는다 | 줄 단위로 거른다 (아래) |
+| `astralparty.battlelog.cfg` | 넣는다 | 기본값에서 바꾼 설정은 `report.txt`에 따로 적는다 |
+| `battle-log.txt` | 뒤 5000줄 | 캐릭터 이름만 쓰는 로그 |
+| `roster-cache.tsv` | **안 넣는다** | uid 해시를 되돌릴 수 있다 (2절) |
+| `replay/` | **안 넣는다** | 게임 진행 시각 |
+| `names.tsv` | 줄 수만 | 게임 텍스트 (3절) |
+| Unity `Player.log` | **안 넣는다** | 게임 자체 로그라 내용을 보장할 수 없다 |
+
+로그는 `[probe]`·`[candidates]`·hex 덤프 줄을 통째로 빼고, 사용자 폴더 경로와 계정 uid(`pid=`·`killer=` 값,
+`unhandled marker from` 뒤의 값, `LogPlayerIds` 참가자 줄의 id)를 `#`로 가립니다. **새 진단 줄에 playerId를
+찍는다면 이 목록에 그 모양을 같이 추가하세요.** 넣는 파일을 바꿀 때도 이 표를 같이 고칩니다.
+
 이 리포의 MIT 라이선스는 **여기 있는 코드에만** 적용되며, Astral Party의 자산·
 프로토콜·거기서 파생된 데이터를 재배포할 권리를 주지 않습니다. 그것들은 각
 권리자(게임사, 그리고 한국어 문자열의 경우 한글패치 번역자)의 것입니다.

@@ -21,6 +21,12 @@
 `names.tsv`는 따로 복사할 필요가 없습니다. 첫 실행 때 플러그인이 게임 데이터에서
 생성합니다. 기존 설정은 `BepInEx/config/astralparty.battlelog.cfg`에 남습니다.
 
+## 문제가 생겼을 때
+
+게임을 다시 켜기 전에 플러그인 폴더의 `collect-report.bat`을 실행하세요. 같은 폴더의
+`reports/`에 진단용 ZIP이 만들어집니다. 사용자 폴더 경로와 계정 식별자는 가려져
+있으니, 내용을 한 번 확인한 뒤 GitHub 이슈에 첨부해 주세요.
+
 ## 제거
 
 게임을 종료한 뒤 `BepInEx/plugins/AstralPartyBattleLog/` 폴더를 삭제하세요. 설정도
