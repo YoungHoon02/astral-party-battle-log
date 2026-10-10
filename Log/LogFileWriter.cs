@@ -28,9 +28,20 @@ internal sealed class LogFileWriter
         _thread.Start();
     }
 
-    public void Append(string line)
+    public static string RoundRule(int round) => $"──────── Round {round} ────────";
+
+    public void Append(string line) => Add($"{DateTime.Now:HH:mm:ss.fff} {line}");
+
+    public void AppendShown(string line, DateTime received) =>
+        Add($"{DateTime.Now:HH:mm:ss.fff} (수신 {received:HH:mm:ss.fff}) {line}");
+
+    // 판을 나가거나 게임을 끄는 바람에 오버레이에 끝내 나가지 않은 줄.
+    public void AppendUnshown(string line, DateTime received) =>
+        Add($"미표시 (수신 {received:HH:mm:ss.fff}) {line}");
+
+    private void Add(string stamped)
     {
-        if (TryAdd(DateTime.Now.ToString("HH:mm:ss.fff ") + line) || _queue.IsAddingCompleted) return;
+        if (TryAdd(stamped) || _queue.IsAddingCompleted) return;
         if (Interlocked.Increment(ref _dropped) == 1)
             _warn("battle-log.txt queue is full; some lines were not written.");
     }

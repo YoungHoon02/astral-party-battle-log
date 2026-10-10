@@ -679,6 +679,7 @@ class Program
         if (!stamped) fails++;
         fl.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 3));   // 닫은 뒤: 예외 없이 무시
         Console.WriteLine("  OK   F3 닫은 뒤 넣어도 예외 없음");
+        fails += Sched.FileTiming(Path.Combine(dir, "battle-log-sync.txt"));
 
         fails += HealthTests.Run();
         fails += ReplayTests.Run(dir);

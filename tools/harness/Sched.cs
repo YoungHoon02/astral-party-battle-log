@@ -313,6 +313,58 @@ static class Sched
         return _fail;
     }
 
+    // battle-log.txt가 받은 즉시가 아니라 오버레이에 나간 순서·시각으로 쓰이는지.
+    public static int FileTiming(string file)
+    {
+        var log = new ManualLogSource("file-sync");
+        int fail = 0;
+        void Check(string label, bool ok)
+        {
+            Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} {label}");
+            if (!ok) fail++;
+        }
+
+        File.WriteAllText(file, "지난 판 내용\n");
+        var writer = new LogFileWriter(file, _ => { });
+        Setup(log);
+        OverlaySchedule.AttachFile(writer);
+
+        OverlaySchedule.Line("old", LineKind.Immediate, 1, 0);
+        Advance(0.01);
+        OverlaySchedule.Reset();
+        Advance(0.01);
+        Out.Clear();
+        OverlaySchedule.Line("atk", LineKind.Attack, 2, 0);
+        Advance(1.0);
+        bool heldOnScreen = Out.Count == 0;
+        Advance(4.0);
+        OverlaySchedule.Page(2, 9);
+        Advance(10.0);
+        OverlaySchedule.Line("left", LineKind.Attack, 3, 0);
+        Advance(0.1);
+        OverlaySchedule.Discard();
+        Advance(0.1);
+        OverlaySchedule.Line("exit", LineKind.Attack, 4, 0);
+        Advance(0.1);
+        OverlaySchedule.FlushFile();
+        OverlaySchedule.AttachFile(null);
+        writer.Close();
+        Out.Clear();
+
+        string[] got = File.ReadAllLines(file);
+        var shown = new System.Text.RegularExpressions.Regex(@"^\d\d:\d\d:\d\d\.\d{3} \(수신 \d\d:\d\d:\d\d\.\d{3}\) atk$");
+        var unshown = new System.Text.RegularExpressions.Regex(@"^미표시 \(수신 \d\d:\d\d:\d\d\.\d{3}\) (left|exit)$");
+        var rule = new System.Text.RegularExpressions.Regex(@"^\d\d:\d\d:\d\d\.\d{3} \(수신 \d\d:\d\d:\d\d\.\d{3}\) ─+ Round 2 ─+$");
+        Check($"F4 새 판 비우기는 큐 순서대로 — 지난 판 줄이 남지 않음 ({got.Length}줄)",
+              got.Length == 4 && !Array.Exists(got, l => l.Contains("지난 판") || l.EndsWith(" old")));
+        Check($"F5 출력된 줄과 라운드 구분선은 출력 시각과 수신 시각을 함께 적음: {(got.Length > 1 ? got[1] : "")}",
+              heldOnScreen && got.Length == 4 && shown.IsMatch(got[0]) && rule.IsMatch(got[1]));
+        Check("F6 판을 나가 버려진 줄과 종료 때 대기 중인 줄은 미표시로 남음",
+              got.Length == 4 && unshown.IsMatch(got[2]) && got[2].EndsWith("left")
+              && unshown.IsMatch(got[3]) && got[3].EndsWith("exit"));
+        return fail;
+    }
+
     // 실제 패킷 → BattleLogger → Mirror → 게이트 → 화면 신호까지 한 경로로 확인한다.
     static void RunLoggerTags(ManualLogSource log)
     {

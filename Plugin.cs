@@ -24,7 +24,8 @@ public class Plugin : BasePlugin
     {
         ConfigEntry<bool> writeFile = Config.Bind(
             "Output", "WriteFile", true,
-            "전투 로그를 플러그인 폴더의 battle-log.txt에도 남긴다.");
+            "전투 로그를 플러그인 폴더의 battle-log.txt에도 남긴다. 오버레이를 켜면 줄이 화면에 나간 " +
+            "시점에 기록하고, 앞에 출력 시각과 (수신 시각)을 함께 적는다.");
 
         ConfigEntry<bool> traceFrames = Config.Bind(
             "Diagnostics", "TraceFrames", false,
@@ -117,10 +118,11 @@ public class Plugin : BasePlugin
         _logger = logger;
         SocketTap.OnFrame = logger.OnFrame;
         // 순수 .NET 이벤트라 IL2CPP 델리게이트 등록 금지에 걸리지 않는다.
+        // 예약 큐가 아직 화면에 안 나간 줄을 파일로 넘긴 뒤에 파일을 닫는다.
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
-            logger.Close();
             OverlaySchedule.Shutdown(unload: false);
+            logger.Close();
         };
 
         ConfigEntry<bool> syncAnimation = Config.Bind(
@@ -167,6 +169,7 @@ public class Plugin : BasePlugin
             logger.MirrorNewPage = OverlaySchedule.Page;
             logger.MirrorClear = OverlaySchedule.Reset;
             logger.MirrorSync = OverlaySchedule.Sync;
+            FollowOverlay(logger, true);
         }
 
         // 로거 상태는 씬 전환에 걸지 않는다. 게임에 들어갈 때도 씬이 바뀌어 명단이 날아간다.
@@ -191,7 +194,7 @@ public class Plugin : BasePlugin
         if (!TryPatch("frame", h => h.PatchAll(typeof(FramePump))))
         {
             DetachOverlay(logger);
-            Log.LogError("Frame hook failed - overlay and name table rebuild are disabled; the log file still works.");
+            Log.LogError("Frame hook failed - overlay and name table rebuild are disabled; the log file is written on receipt.");
         }
         else if (OverlaySchedule.UsesScreenSignals || screenProbe.Value)
         {
@@ -235,6 +238,14 @@ public class Plugin : BasePlugin
         logger.MirrorNewPage = null;
         logger.MirrorClear = null;
         logger.MirrorSync = null;
+        FollowOverlay(logger, false);
+    }
+
+    // 파일을 오버레이 출력 시점에 쓴다. 프레임 펌프가 없으면 받은 즉시 쓰는 방식으로 돌아간다.
+    private static void FollowOverlay(BattleLogger logger, bool on)
+    {
+        OverlaySchedule.AttachFile(on ? logger.File : null);
+        logger.FileFollowsOverlay = on && logger.File is not null;
     }
 
     private static void HookDisabled()

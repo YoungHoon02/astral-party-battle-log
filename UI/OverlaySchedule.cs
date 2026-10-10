@@ -30,12 +30,15 @@ internal static partial class OverlaySchedule
         public readonly int Detail;
         // 재생 기록 번호. 기록을 끄면 0이다.
         public readonly long Id;
+        // 파일 기록 대기 번호. 파일을 붙이지 않았거나 줄·라운드 구분선이 아니면 0이다.
+        public readonly long FileKey;
 
         public Item(Signal signal, LineKind kind, long group, int units, long receivedUs, float speed,
-                    int generation, string? text, int round, int detail, long id)
+                    int generation, string? text, int round, int detail, long id, long fileKey = 0)
         {
             Signal = signal; Kind = kind; Group = group; Units = units; ReceivedUs = receivedUs;
             Speed = speed; Generation = generation; Text = text; Round = round; Detail = detail; Id = id;
+            FileKey = fileKey;
         }
     }
 
@@ -198,7 +201,13 @@ internal static partial class OverlaySchedule
         _touched = true;
         var item = new Item(signal, kind, group, units, Volatile.Read(ref _nowUs),
                             Volatile.Read(ref _speed), Volatile.Read(ref _generation),
-                            text, round, detail, _recording ? Interlocked.Increment(ref _itemIds) : 0);
+                            text, round, detail, _recording ? Interlocked.Increment(ref _itemIds) : 0,
+                            signal switch
+                            {
+                                Signal.Line => HoldForFile(text!),
+                                Signal.Page => HoldForFile(LogFileWriter.RoundRule(round)),
+                                _ => 0,
+                            });
         if (signal == Signal.Page || signal == Signal.Line && kind is LineKind.Turn or LineKind.Dice or LineKind.Attack)
             ScheduleHealth.OnBattleInput(item.Generation);
         if (_recording) RecordItem(item, parent);
@@ -408,9 +417,9 @@ internal static partial class OverlaySchedule
         Item item = s.Item;
         switch (item.Signal)
         {
-            case Signal.Line: line(item.Text!); break;
-            case Signal.Page: page(item.Round); break;
-            case Signal.Clear: clear(); break;
+            case Signal.Line: line(item.Text!); WriteFile(item.FileKey, shown: true); break;
+            case Signal.Page: page(item.Round); WriteFile(item.FileKey, shown: true); break;
+            case Signal.Clear: clear(); TruncateFile(); break;
         }
         Decide(Act.Release, item, why, cause, leader, planned ? s.DueUs : Null, planned ? s.FloorUs : Null,
                resolvedUs, now);

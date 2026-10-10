@@ -28,6 +28,10 @@ internal sealed class BattleLogger
     public Action? MirrorClear;
     public Action<int, int>? MirrorSync;
 
+    // 켜면 파일 기록과 비우기를 오버레이 예약 큐(OverlaySchedule.AttachFile)가 맡는다.
+    public bool FileFollowsOverlay;
+    public LogFileWriter? File => _file;
+
     private LineKind _kind;
     private long _group;
     private long _groupSeq;
@@ -1507,7 +1511,7 @@ internal sealed class BattleLogger
         FlushGold();
         Diag($"[game] round {_round}");
         try { MirrorNewPage?.Invoke(_round, _group); } catch { }
-        WriteFile($"──────── Round {_round} ────────");
+        if (!FileFollowsOverlay) WriteFile(LogFileWriter.RoundRule(_round));
     }
 
     public void LeftGame() => _cache?.Discard();
@@ -1577,7 +1581,7 @@ internal sealed class BattleLogger
         _activeSkillCaster = 0;
         _activeSkillAt = default;
         _msgActor = 0;
-        _file?.Truncate();
+        if (!FileFollowsOverlay) _file?.Truncate();
     }
 
     public void Close() => _file?.Close();
@@ -1597,9 +1601,8 @@ internal sealed class BattleLogger
 
     private void EmitLine(string line, LineKind kind, long group, int units = 0)
     {
-        string plain = Palette.Strip(line);
         try { Mirror?.Invoke(line, kind, group, units, kind == _kind ? _detail : 0); } catch { }
-        WriteFile(plain);
+        if (!FileFollowsOverlay) WriteFile(Palette.Strip(line));
     }
 
     private static LineKind KindOf(int cmdId) => cmdId switch

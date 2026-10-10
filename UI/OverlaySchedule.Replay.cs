@@ -113,6 +113,7 @@ internal static partial class OverlaySchedule
         if (Interlocked.Exchange(ref _shutdown, 1) != 0) return;
         ScheduleHealth.Close(unload ? "unload" : "exit");
         if (unload) Discard();
+        FlushFile();
         if (_sink is ReplayWriter w && !w.Close(unload ? "unload" : "normal", 2000))
             TimingTrace.Warn("[replay] could not write the final end in time; the file keeps its last checkpoint");
         ScheduleHealth.RunEnd(unload ? "unload" : "exit");
@@ -253,6 +254,7 @@ internal static partial class OverlaySchedule
     // 폐기 사유는 그 줄의 세대를 끝낸 변경이다. 기록에 없으면(중간 시작) stale로 둔다.
     private static void Drop(in Item item)
     {
+        WriteFile(item.FileKey, shown: false);
         if (!_recording) return;
         Why why;
         lock (GenOps) why = GenOps.TryGetValue(item.Generation + 1, out Why op) ? op : Why.Stale;
