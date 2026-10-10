@@ -22,6 +22,11 @@ HybridCLR 핫업데이트 어셈블리(타입 9,803개)이고, `Assembly-CSharp.
 있으면 `GameObject.SetActive`에 화면 신호용 Postfix가 추가된다. 설치에 실패하면 연출 길이 추정으로 동작한다([SIGNAL-GATING.md](SIGNAL-GATING.md)).
 측정 4에서 쓰던 텍스트 setter 후킹과 오브젝트 전수 기록은 제거했다.
 
+후킹은 기능마다 Harmony ID를 따로 쓴다(`.socket`, `.frame`, `.screen`). 한 기능의 설치가
+실패해도 다른 기능은 그대로 동작한다. 프레임 후킹이 실패하면 오버레이 연결만 끊고 파일 로그는
+남긴다. 실패한 후킹은 되돌리지 않고 연결만 끊는다 — 소켓 후킹은 스레드풀에서 불리므로 실행
+중에 디투어를 해제하는 것은 안전하지 않다.
+
 ## 절대 하면 안 되는 것 (크래시 확정)
 
 같은 게임의 AnimSpeed 모드에서 실측으로 확인된 것 — Il2CppInterop의

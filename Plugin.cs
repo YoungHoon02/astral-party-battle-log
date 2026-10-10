@@ -17,7 +17,7 @@ public class Plugin : BasePlugin
 {
     public const string Guid = "astralparty.battlelog";
 
-    private Harmony? _harmony;
+    private readonly List<Harmony> _harmonies = new();
     private BattleLogger? _logger;
 
     public override void Load()
@@ -173,34 +173,68 @@ public class Plugin : BasePlugin
         FramePump.OnSceneChanged = LogOverlay.OnSceneChanged;
         LogOverlay.OnLeftGame = logger.LeftGame;
 
-        try
-        {
-            _harmony = new Harmony(Guid);
-            _harmony.PatchAll(typeof(BeginReceivePatch));
-            _harmony.PatchAll(typeof(EndReceivePatch));
-            // 오버레이를 꺼도 씬 감지·이름표 수집에 필요하다.
-            _harmony.PatchAll(typeof(FramePump));
-            Log.LogInfo("Socket patches applied. Waiting for battle traffic.");
-            bool gating = OverlaySchedule.UsesScreenSignals;
-            if (gating || screenProbe.Value)
+        // 기능마다 Harmony를 따로 둬서 한 후킹의 실패가 다른 기능을 끄지 않게 한다.
+        // 실패한 기능은 되돌리지 않고 연결만 끊는다. 소켓 후킹은 스레드풀에서 불려 실행 중 해제가 안전하지 않다.
+        if (TryPatch("socket", h =>
             {
-                bool hooked = ScreenProbe.Init(Log, _harmony, gating ? OverlaySchedule.Screen : null,
-                                               gating ? HookDisabled : null, screenProbe.Value);
-                OverlaySchedule.NoteHook(hooked ? HookState.Installed : HookState.Failed);
-                if (!hooked && gating)
-                {
-                    OverlaySchedule.FallBackToModel();
-                    Log.LogWarning("Screen signal hook failed; overlay falls back to estimated timing.");
-                }
-            }
-        }
-        catch (Exception e)
+                h.PatchAll(typeof(BeginReceivePatch));
+                h.PatchAll(typeof(EndReceivePatch));
+            }))
+            Log.LogInfo("Socket patches applied. Waiting for battle traffic.");
+        else
         {
-            Log.LogError($"Socket patching failed - no battle logging will happen: {e}");
             SocketTap.OnFrame = null;
+            Log.LogError("Socket patching failed - no battle logging will happen.");
+        }
+
+        // 오버레이를 꺼도 씬 감지·이름표 수집에 필요하다.
+        if (!TryPatch("frame", h => h.PatchAll(typeof(FramePump))))
+        {
+            DetachOverlay(logger);
+            Log.LogError("Frame hook failed - overlay and name table rebuild are disabled; the log file still works.");
+        }
+        else if (OverlaySchedule.UsesScreenSignals || screenProbe.Value)
+        {
+            bool gating = OverlaySchedule.UsesScreenSignals;
+            var screen = new Harmony($"{Guid}.screen");
+            _harmonies.Add(screen);
+            bool hooked = ScreenProbe.Init(Log, screen, gating ? OverlaySchedule.Screen : null,
+                                           gating ? HookDisabled : null, screenProbe.Value);
+            OverlaySchedule.NoteHook(hooked ? HookState.Installed : HookState.Failed);
+            if (!hooked && gating)
+            {
+                OverlaySchedule.FallBackToModel();
+                Log.LogWarning("Screen signal hook failed; overlay falls back to estimated timing.");
+            }
         }
 
         if (path is not null) Log.LogInfo($"Battle log file: {path}");
+    }
+
+    private bool TryPatch(string feature, Action<Harmony> apply)
+    {
+        var harmony = new Harmony($"{Guid}.{feature}");
+        _harmonies.Add(harmony);
+        try
+        {
+            apply(harmony);
+            return true;
+        }
+        catch (Exception e)
+        {
+            Log.LogError($"[{feature}] patching failed: {e}");
+            return false;
+        }
+    }
+
+    // 프레임 펌프가 없으면 오버레이 큐가 비워지지 않고 쌓이기만 한다.
+    private static void DetachOverlay(BattleLogger logger)
+    {
+        logger.Mirror = null;
+        logger.MirrorAdvance = null;
+        logger.MirrorNewPage = null;
+        logger.MirrorClear = null;
+        logger.MirrorSync = null;
     }
 
     private static void HookDisabled()
@@ -248,7 +282,7 @@ public class Plugin : BasePlugin
         SocketTap.OnFrame = null;
         OverlaySchedule.Shutdown(unload: true);
         _logger?.Close();
-        _harmony?.UnpatchSelf();
+        foreach (Harmony harmony in _harmonies) harmony.UnpatchSelf();
         return true;
     }
 }
