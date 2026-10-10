@@ -1,4 +1,4 @@
-param(
+﻿param(
     [switch]$Draft,
     [switch]$Prerelease,
     # 릴리스는 나갔는데 알림 인덱스 게시만 실패했을 때, 인덱스만 다시 올린다.
