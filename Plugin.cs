@@ -109,9 +109,10 @@ public class Plugin : BasePlugin
 
         ConfigEntry<bool> checkRelease = Config.Bind(
             "Update", "CheckRelease", true,
-            "게임을 켤 때 한 번 GitHub(raw.githubusercontent.com)에서 새 릴리스가 있는지 확인해 BepInEx 로그와 " +
-            "오버레이 머리줄에 알린다. 요청 하나만 보내며 계정·게임 정보는 싣지 않는다. 받거나 설치하지는 않는다.");
-        if (checkRelease.Value) ReleaseCheck.Start(Log);
+            "게임을 켤 때 같은 폴더의 AstralPartyBattleLogUpdater.exe를 띄워 새 릴리스가 있는지 확인한다. " +
+            "새 버전이 있을 때만 게임 밖에 알림 창이 뜬다. 확인 프로그램은 GitHub에 요청 하나만 보내며 " +
+            "계정·게임 정보는 싣지 않고, 받거나 설치하지는 않는다. 게임 프로세스는 네트워크를 쓰지 않는다.");
+        if (checkRelease.Value) ReleaseCheck.Start(Log, Path.Combine(Paths.PluginPath, "AstralPartyBattleLog"));
 
         string cachePath = Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "roster-cache.tsv");
         var cache = new RosterCache(cachePath, Log.LogWarning);

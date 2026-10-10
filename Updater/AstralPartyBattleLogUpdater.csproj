@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- .NET Framework 4.8은 Windows 10/11에 기본으로 들어 있어 이용자가 런타임을 따로 설치하지 않아도 된다. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>AstralPartyBattleLogUpdater</AssemblyName>
+    <RootNamespace>AstralPartyBattleLog.Updater</RootNamespace>
+    <!-- build-release.ps1이 플러그인 버전으로 덮어쓴다. 비교 기준은 옆의 플러그인 DLL이다. -->
+    <Version>0.3.2</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Runtime.Serialization" />
+  </ItemGroup>
+
+</Project>

@@ -685,12 +685,12 @@ class Program
         Console.WriteLine("=== 릴리스 알림 인덱스 ===");
         string Index(string version, string? url = null, int schema = 1, string sha = "ab12", long size = 1) =>
             $"{{\"schemaVersion\":{schema},\"version\":\"{version}\",\"downloadUrl\":\""
-            + (url ?? $"https://github.com/{ReleaseCheck.Repository}/releases/download/v{version}/AstralPartyBattleLog-v{version}.zip")
+            + (url ?? $"https://github.com/{AstralPartyBattleLog.Updater.ReleaseIndex.Repository}/releases/download/v{version}/AstralPartyBattleLog-v{version}.zip")
             + $"\",\"sha256\":\"{(sha == "ab12" ? new string('a', 64) : sha)}\",\"size\":{size}}}";
         var running = new Version(0, 3, 2, 0);
         string Verdict(string json)
         {
-            try { return ReleaseCheck.Newer(System.Text.Encoding.UTF8.GetBytes(json), running) ?? "같거나 이전"; }
+            try { return AstralPartyBattleLog.Updater.ReleaseIndex.Newer(System.Text.Encoding.UTF8.GetBytes(json), running) ?? "같거나 이전"; }
             catch (InvalidDataException e) { return $"무시: {e.Message}"; }
         }
         void ExpectRelease(string label, string json, string want)

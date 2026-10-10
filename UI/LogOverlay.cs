@@ -70,6 +70,7 @@ internal static class LogOverlay
     private static GameObject? _root;
     private static Text? _text;
     private static Text? _header;
+    private static Text? _footer;
     private static RectTransform? _panel;
     private static RectTransform? _grip;
     private static Image? _gripBack;
@@ -370,7 +371,12 @@ internal static class LogOverlay
 
     private static float HeaderGap() => FontSize * 0.5f;
 
-    private static float HeightFor(int lines) => TextHeight(lines) + FontSize + HeaderGap() + PadY * 2f;
+    private static int FooterSize => Math.Max(8, (int)Math.Round(FontSize * 0.7f));
+
+    private static float FooterHeight() => FooterSize * 1.25f;
+
+    private static float HeightFor(int lines) =>
+        TextHeight(lines) + FontSize + HeaderGap() + FooterHeight() + PadY * 2f;
 
     private static Vector2 CanvasSize()
     {
@@ -508,11 +514,12 @@ internal static class LogOverlay
 
         string position = total > MaxLines ? $"   {_offset + 1}-{_offset + shown}/{total}" : "";
         string hint = _following ? "" : "   (최신 아님)";
-        string release = ReleaseCheck.Latest is { } latest ? $"   새 버전 v{latest}" : "";
-        _header.text = $"Round {page.Round}{position}{hint}{release}";
+        _header.text = $"Round {page.Round}{position}{hint}";
 
         _text.text = string.Join("\n", page.Lines.Skip(_offset).Take(MaxLines));
     }
+
+    private static string FooterText() => $"v{ReleaseCheck.Current}";
 
     private static void Create()
     {
@@ -563,8 +570,19 @@ internal static class LogOverlay
         RectTransform textRect = _text.transform.TryCast<RectTransform>()!;
         textRect.anchorMin = Vector2.zero;
         textRect.anchorMax = Vector2.one;
-        textRect.offsetMin = new Vector2(PadX, PadY);
+        textRect.offsetMin = new Vector2(PadX, PadY + FooterHeight());
         textRect.offsetMax = new Vector2(-PadX, -FontSize - HeaderGap() - PadY);
+
+        _footer = AddText(panel, "Footer", TextAnchor.LowerRight,
+                          new Color(0.62f, 0.72f, 0.86f, 0.6f));
+        _footer.fontSize = FooterSize;
+        _footer.text = FooterText();
+        RectTransform footerRect = _footer.transform.TryCast<RectTransform>()!;
+        footerRect.anchorMin = Vector2.zero;
+        footerRect.anchorMax = new Vector2(1f, 0f);
+        footerRect.pivot = new Vector2(1f, 0f);
+        footerRect.offsetMin = new Vector2(PadX, PadY * 0.5f);
+        footerRect.offsetMax = new Vector2(-PadX, PadY * 0.5f + FooterHeight());
         MeasureLines();
 
         _root.SetActive(_visible);
@@ -637,7 +655,7 @@ internal static class LogOverlay
         if (found is null || ReferenceEquals(found, _font)) return;
 
         _font = found;
-        foreach (Text? label in new[] { _text, _header })
+        foreach (Text? label in new[] { _text, _header, _footer })
         {
             if (label is null) continue;
             label.font = found;

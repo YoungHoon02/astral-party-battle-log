@@ -19,9 +19,9 @@ Astral Party Battle Log는 Astral Party의 비공식 전투 기록 플러그인�
 4. **라이선스와 보증**: 프로젝트의 소스 코드는 동봉된 `LICENSE`의 MIT 라이선스를
    따릅니다. 이 라이선스는 게임, 게임 자산 또는 게임에서 추출한 데이터에 대한 권리를
    부여하지 않습니다. 플러그인은 라이선스에 적힌 대로 보증 없이 제공됩니다.
-5. **새 버전 확인**: 게임을 켤 때 한 번 GitHub(`raw.githubusercontent.com`)에서 새 릴리스가
-   있는지 확인합니다. 요청 하나만 보내며 계정·게임 정보는 싣지 않습니다. 새 버전이 있으면
-   알리기만 하고, 내려받거나 설치하지는 않습니다. 설정 `Update.CheckRelease`를 `false`로
-   두면 확인하지 않습니다.
+5. **새 버전 확인**: 게임을 켤 때 같은 폴더의 `AstralPartyBattleLogUpdater.exe`가 실행되어
+   GitHub(`raw.githubusercontent.com`)에서 새 릴리스가 있는지 확인합니다. 요청 하나만 보내며
+   계정·게임 정보는 싣지 않습니다. 새 버전이 있을 때만 알림 창을 띄우고, 내려받거나 설치하지는
+   않습니다. 설정 `Update.CheckRelease`를 `false`로 두면 자동으로 확인하지 않습니다.
 
 설치 방법과 제거 방법은 같은 폴더의 `HOW_TO_INSTALL.md`를 참고하세요.

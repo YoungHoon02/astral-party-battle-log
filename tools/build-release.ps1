@@ -16,6 +16,11 @@ if ($plugin -notmatch ('\[BepInPlugin\(Guid,\s*"Astral Party Battle Log",\s*"' +
 & dotnet build $project -c $Configuration --no-restore
 if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
 
+$updaterProject = Join-Path $root 'Updater/AstralPartyBattleLogUpdater.csproj'
+& dotnet build $updaterProject -c $Configuration -p:Version=$version
+if ($LASTEXITCODE -ne 0) { throw 'Updater build failed.' }
+$updaterDir = Join-Path $root "Updater/bin/$Configuration/net48"
+
 $dll = Join-Path $root "bin/$Configuration/net6.0/AstralPartyBattleLog.dll"
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root "bin/$Configuration" }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
@@ -23,6 +28,8 @@ $zip = Join-Path $OutputDirectory "AstralPartyBattleLog-v$version.zip"
 if (Test-Path -LiteralPath $zip) { throw "Package already exists: $zip" }
 $files = @(
     @{ Source = $dll; Entry = 'BepInEx/plugins/AstralPartyBattleLog/AstralPartyBattleLog.dll' },
+    @{ Source = (Join-Path $updaterDir 'AstralPartyBattleLogUpdater.exe'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/AstralPartyBattleLogUpdater.exe' },
+    @{ Source = (Join-Path $updaterDir 'AstralPartyBattleLogUpdater.exe.config'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/AstralPartyBattleLogUpdater.exe.config' },
     @{ Source = (Join-Path $root 'release/USER_AGREEMENT.md'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/USER_AGREEMENT.md' },
     @{ Source = (Join-Path $root 'release/HOW_TO_INSTALL.md'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/HOW_TO_INSTALL.md' },
     @{ Source = (Join-Path $root 'LICENSE'); Entry = 'BepInEx/plugins/AstralPartyBattleLog/LICENSE' },
