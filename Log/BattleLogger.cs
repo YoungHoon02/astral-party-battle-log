@@ -18,6 +18,8 @@ internal sealed class BattleLogger
     private readonly bool _logPlayerIds;
     private readonly bool _logCards;
 
+    public bool LogChat { get; init; } = true;
+
     // 마지막 값은 주사위 줄이면 캐릭터 주사위 눈을 두 자리씩 담은 값("5+2" → 205, 모르면 0),
     // PK 줄이면 반격 여부(1/0), 차례 시작 줄이면 차례 배너가 뜨지 않는지(1/0)다. 화면 신호 짝짓기용(docs/SIGNAL-GATING.md).
     public Action<string, LineKind, long, int, int>? Mirror;
@@ -255,6 +257,8 @@ internal sealed class BattleLogger
             case Op.LandBuffs: DecodeLandBuffs(body); break;
             case Op.ThrowDice: DecodeThrowDice(body); break;
             case Op.MoveAgain: DecodeMoveAgain(body); break;
+            case Op.RoomShortChat: if (LogChat) DecodeShortChat(body); break;
+            case Op.ChatMapMarkers: if (LogChat) DecodeMapMarker(body); break;
         }
 
         if (updatesRoster) DrainDeferred();
@@ -535,6 +539,107 @@ internal sealed class BattleLogger
         Emit($"{RoundTag} {_roster.Name(pid)} 칩 획득 "
              + (text.Length > 0 ? text : $"#{relicId}"));
         Said(RelicCause, relicId, pid);
+    }
+
+    // GameLogic.MessageType — 맵 마커 문자열 "종류, 인자, ..."의 첫 값
+    private const long LandMarkMsg = 3, RelicMsg = 4, PveEventMsg = 6, PveTaskMsg = 7,
+                       CardMsg = 8, SkillMsg = 9, PlayerMarkMsg = 10;
+
+    // 카드·칩 공유가 함께 쓰는 마커(BattleCardMessage.MarkId), 스킬·미션 공유가 쓰는 문구 id
+    private const long ItemShareMark = 40018;
+    private const long SkillReadyChat = 40010, SkillCooldownChat = 40011, PveTaskChat = 40015;
+
+    // 플레이어 마커는 게임 대사 대신 "누가 누구에게 무엇을"로 적는다. 표에 없는 마커는 게임 대사를 쓴다.
+    private static readonly Dictionary<long, string> PlayerMarks = new()
+    {
+        [40008] = "치유 예정",
+        [40009] = "코인 전송 예정",
+        [40007] = "카드 수 지목",
+        [40012] = "경계",
+        [40013] = "집중 공격",
+        [40014] = "담당",
+        [40005] = "치료 요청",
+        [40006] = "코인 요청",
+        [40017] = "카드 요청",
+    };
+
+    private void DecodeShortChat(byte[] body)
+    {
+        (long pid, long chatId, _) = ReadChat(body);
+        if (pid == 0 || chatId == 0) return;
+        Emit($"{RoundTag} {_roster.Name(pid)} 빠른 대화: \"{_names.Lookup("chat", chatId) ?? $"#{chatId}"}\"");
+    }
+
+    private void DecodeMapMarker(byte[] body)
+    {
+        (long pid, _, string? msg) = ReadChat(body);
+        if (pid == 0 || string.IsNullOrEmpty(msg)) return;
+
+        string[] parts = msg.Split(',');
+        long Arg(int i) => i < parts.Length && long.TryParse(parts[i].Trim(), out long v) ? v : 0;
+
+        string who = _roster.Name(pid);
+        string? line = Arg(0) switch
+        {
+            LandMarkMsg => ChatText("chatmark", Arg(1)) is { } t ? $"{who} 마커: {t} ({LandText(Arg(2))})" : null,
+            PlayerMarkMsg => PlayerMarkLine(who, pid, Arg(1), Arg(2)),
+            CardMsg => Shared(who, ChatText("chatmark", ItemShareMark, CardLabel(Arg(1)))),
+            RelicMsg => Shared(who, ChatText("chatmark", ItemShareMark,
+                RelicText(Arg(1)) is { Length: > 0 } relic ? relic : $"칩 #{Arg(1)}")),
+            SkillMsg => Shared(who, Arg(1) == 0
+                ? ChatText("chat", SkillReadyChat)
+                : ChatText("chat", SkillCooldownChat, Arg(1).ToString())),
+            PveEventMsg => Shared(who, ChatText("chatmark", Arg(1), Arg(2).ToString(),
+                parts.Length > 3 ? string.Join(" & ", parts[3].Split('|').Select(e => $"#{e.Trim()}")) : "?")),
+            PveTaskMsg => Shared(who, ChatText("chat", PveTaskChat, $"#{Arg(1)}")),
+            _ => null,
+        };
+
+        if (line is null)
+        {
+            Diag($"[chat] unhandled marker from {pid}: '{msg}'");
+            return;
+        }
+        Emit($"{RoundTag} {line}");
+    }
+
+    private string? PlayerMarkLine(string who, long pid, long target, long markId)
+    {
+        string whom = _roster.Name(target);
+        if (PlayerMarks.TryGetValue(markId, out string? action))
+            return target == pid ? $"{who} {action}" : $"{who} -> {whom} {action}";
+        return ChatText("chatmark", markId, whom) is { } t ? $"{who} 마커: {t}" : null;
+    }
+
+    private static string? Shared(string who, string? text) => text is null ? null : $"{who} 공유: {text}";
+
+    // string.Format을 쓰지 않는다 — 번역문에 짝 없는 중괄호가 하나만 있어도 예외가 난다.
+    private string? ChatText(string kind, long id, params string[] args)
+    {
+        if (_names.Lookup(kind, id) is not { } text) return null;
+        for (int i = 0; i < args.Length; i++) text = text.Replace($"{{{i}}}", args[i]);
+        return text;
+    }
+
+    // RoomShortChatS2C {1:PlayerId, 2:Index} / ChatMapMarkersS2C {1:PlayerId, 2:Msg}
+    private static (long Pid, long Number, string? Text) ReadChat(byte[] body)
+    {
+        long pid = 0, number = 0;
+        string? text = null;
+        var r = new ProtoReader(body, 0, body.Length);
+        while (r.NextField(out int field, out int wire))
+        {
+            if (wire == ProtoReader.WireLength)
+            {
+                if (field == 2) { if (!r.TryReadString(out string s)) break; text = s; }
+                else if (!r.Skip(wire)) break;
+                continue;
+            }
+            if (!r.TryReadNumber(wire, out long v)) break;
+            if (field == 1) pid = v;
+            else if (field == 2) number = v;
+        }
+        return (pid, number, text);
     }
 
     private void AppendTargets(StringBuilder sb, List<long> targets)
@@ -921,14 +1026,7 @@ internal sealed class BattleLogger
         if (label.Length == 0) return ("", s, id);
 
         // land의 id는 LandType이 아니라 맵 칸 번호다.
-        if (table == "land")
-        {
-            long? landType = _lands.TypeOf(id);
-            if (landType is null) return ($"{label} {id}번 칸", s, id);
-            return _names.Lookup("land", landType.Value) is { } landName
-                ? ($"{label} \"{landName}\"", s, id)
-                : ($"{label} {id}번 칸", s, id);
-        }
+        if (table == "land") return ($"{label} {LandText(id)}", s, id);
         if (table is null) return (label, s, id);
         if (_names.Lookup(table, id) is { } name)
         {
@@ -949,6 +1047,11 @@ internal sealed class BattleLogger
         _names.Lookup("relic", id) is { } name
             ? Palette.Relic($"\"{name}\"", _names.Lookup("relicgrade", id))
             : "";
+
+    private string LandText(long node) =>
+        _lands.TypeOf(node) is { } landType && _names.Lookup("land", landType) is { } name
+            ? $"\"{name}\""
+            : $"{node}번 칸";
 
     private void DecodeEffect(ProtoReader r, List<string> lines, long causeSource, long causeId)
     {

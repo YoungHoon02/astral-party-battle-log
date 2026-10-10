@@ -241,6 +241,15 @@ STRCard { 1: repeated STRCardLocalConfigure
 | character | Character | 4 | 플레이어 캐릭터 |
 | charskill | Character | (18/19 액티브, **20/21 packed 패시브**) | 이름이 아니라 **대응표** — `heroId → 스킬 이름 목록` |
 | monskill | Monster | (17 액티브, **18 packed 패시브**) | 〃 |
+| chat | — | (`STRChat` 그대로) | 빠른 대화·공유 문구. id가 곧 문구 id다 |
+| chatmark | Chat | 2 (**목록은 필드 3** `Marks`) | 마커 id → 문구. 40017→21012, 40018→40000처럼 id가 다른 것이 있어 조인이 필요하다 |
+
+**`Chat` 표만 목록이 필드 1이 아니다** — `{1:Infos, 2:InfoDict, 3:Marks, 4:MarkDict}`이고
+마커는 3에 있다.
+
+**표 구성을 바꾸면 `NameConfig.Schema`를 올린다** (`extract_names.py`의 `SCHEMA`도). 파일
+첫 줄 `# schema N`이 이보다 낮거나 없으면 플러그인이 다음 실행에 `names.tsv`를 다시 만든다.
+이 장치가 없으면 이미 설치한 사람의 파일에는 새 종류가 영영 들어가지 않는다.
 
 **`charskill`/`monskill`은 문자열표와 직접 조인하지 않는다** — 먼저 만든 `skill`
 이름을 재사용해 쉼표로 이어 붙인다. 패시브 필드(20/21/18)는 **packed repeated
@@ -721,6 +730,47 @@ if (... && errid == 0 && !model.IsReroll)
 
 `UpdateHeroAttr`의 relic 원인은 획득과 발동을 구별하지 못하므로
 (이미 가진 칩이 발동할 때도 같은 원인이 붙는다) 효과 줄이 없으면 그냥 버린다.
+
+## 빠른 대화와 핑
+
+전투 중 소통은 클라가 보내면 서버가 받는 사람들에게 되뿌린다. 기록하는 것은 둘이다.
+
+| 메시지 | 본문 | 게임 쪽 처리 |
+| --- | --- | --- |
+| `RoomShortChatS2C`(5150) | `{1:PlayerId, 2:Index}` — Index가 곧 `STRChat` 문구 id | `CommunicateLogic`의 `BattleMessage(SHORTINFO, …)` |
+| `ChatMapMarkersS2C`(5238) | `{1:PlayerId, 2:Msg}` — Msg는 `"종류, 인자, …"` | `CommunicateLogic.DealChatMsg` → `_messageFactory` |
+
+**"정보 공유"와 "맵 마커"는 같은 메시지(5238)다.** 카드·칩·스킬 핑도 땅·플레이어 마커도
+전부 `RequestSendMessageC2S` → `ChatMapMarkersC2S`로 나간다. `PlayerChatS2C`(5348)는 이름과
+달리 결과 화면의 칭찬(`BattleSettlementPanel.ChatPraise`)에만 쓰여 기록하지 않는다.
+
+Msg의 첫 값은 `GameLogic.MessageType`이고, 뒤 인자는 각 `Battle*Message`의 문자열
+생성자가 읽는 순서 그대로다.
+
+| 첫 값 | 클래스 | 인자 | 로그 |
+| --- | --- | --- | --- |
+| 3 | `BattleLandMessage` | 마커 id, 칸 번호 | `마커: <마커 문구> (<땅>)` |
+| 10 | `BattlePlayerMarkMessage` | 대상 id, 마커 id | `A -> B 치유 예정` 꼴 (아래) |
+| 8 | `BattleCardMessage` | 카드 id | `공유: 나 "카드" 있어` (마커 40018) |
+| 4 | `BattleRelicMessage` | 칩 id | 〃 (같은 마커 40018) |
+| 9 | `BattleSkillMessage` | 남은 쿨타임 | 0이면 문구 40010, 아니면 40011 |
+| 6 | `BattlePveEventMessage` | 마커 id, 진행도, 이벤트 카드 `a\|b` | 이벤트 카드 이름표가 없어 `#id`로 남는다 |
+| 7 | `BattlePveTaskMessage` | 미션 id | 미션 제목은 방 정보에서 오므로 `#id`로 남는다 |
+
+**플레이어 마커는 게임 대사 대신 "누가 누구에게 무엇을"로 적는다.** 메뉴는 찍은 대상에
+따라 갈린다(`UIExpression_Com_ChatMenu.ShowPlayerMenu`): 적은 40012/40013/40014, 같은 팀은
+40008/40009/40007, 나 자신은 40005/40006/40017. 40007의 `{1}`은 받는 쪽 화면의 손패
+장수인데, 그 값은 `HeroAttrEffect.Card`에서만 나오므로 채우지 않고 `카드 수 지목`으로
+적는다. 표(`BattleLogger.PlayerMarks`)에 없는 새 마커는 게임 대사를 쓴다.
+
+번역문을 채울 때 `string.Format`을 쓰지 않는다 — 문구에 짝 없는 중괄호가 하나라도 있으면
+예외가 난다. `{0}`, `{1}`만 직접 바꾼다.
+
+**차단은 화면에서만 걸러진다.** 게임은 받은 뒤 `lockExpressionPlayerID`로 버린다. 그
+목록은 게임 메모리에만 있어 소켓만 보는 이 플러그인은 따를 수 없다 — 그래서 차단한
+사람의 메시지도 기록된다(`LogChat`으로 통째로 끌 수 있다). 게임은 자기 id로 온 마커도
+버리는데(이미 로컬에 띄웠으므로), 서버가 보낸 사람에게도 되돌려 보내는지는 아직 실측하지
+않았다.
 
 ## HP 증감은 RealChangeHp다 (v0.1.3)
 

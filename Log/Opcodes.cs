@@ -42,6 +42,9 @@ internal static class Op
     public const int LandBuffs = 1013;
     public const int HeroSkillMoveEffect = 1096;
 
+    public const int ChatMapMarkers = 5238;
+    public const int RoomShortChat = 5150;
+
     // 차단목록이 아니라 허용목록이다. 이 밖의 본문은 파싱하지 않는다.
     public static readonly HashSet<int> Allowed = new()
     {
@@ -61,6 +64,8 @@ internal static class Op
         MoveAgain,
         LandBuffs,
         HeroSkillMoveEffect,
+        ChatMapMarkers,
+        RoomShortChat,
     };
 
     // 헤더만 보는 판 진입 신호. 본문(방 전체)은 손패를 품고 있어 Allowed에 넣지 않는다.
@@ -90,6 +95,8 @@ internal static class Op
         ThrowDice => "ThrowDice",
         MoveAgain => "MoveAgain",
         LandBuffs => "LandBuffs",
+        ChatMapMarkers => "ChatMapMarkers",
+        RoomShortChat => "RoomShortChat",
         _ => "?",
     };
 }

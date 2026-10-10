@@ -600,6 +600,51 @@ class Program
         if (!hok) fails++;
 
         Console.WriteLine();
+        Console.WriteLine("=== 빠른 대화 / 마커 ===");
+        string chatPath = Path.Combine(dir, "names-chat.tsv");
+        File.WriteAllText(chatPath, "card\t42\t폭탄\ncardtype\t42\tAttack\nchat\t10001\t준비!\n"
+            + "chat\t40010\t스킬 준비 완료!\nchat\t40011\t스킬 쿨타임 {0}턴 남았어\n"
+            + "chatmark\t40002\t이쪽으로 이동해!\nchatmark\t40018\t나 {0} 있어\nchatmark\t40099\t{0} 새 마커 {1}\n",
+            new System.Text.UTF8Encoding(false));
+        var chatNames = NameTable.Load(chatPath, _ => { });
+        var said = new List<string>();
+        var cl = new BattleLogger(log, null, false, new HashSet<int>(), false, true, chatNames);
+        cl.Mirror = (s, k, g, u, _) => said.Add($"{k} {Palette.Strip(s)}");
+        byte[] Str(int f, string s) => Frame.Msg(f, System.Text.Encoding.UTF8.GetBytes(s));
+        void Marker(long pid, string msg) =>
+            cl.OnFrame(new FrameHeader(Op.ChatMapMarkers, 0, 0, 0), Frame.Cat(Frame.Fix64(1, pid), Str(2, msg)));
+        void ExpectChat(string label, string want)
+        {
+            bool ok = want.Length == 0 ? said.Count == 0 : said.Count == 1 && said[0] == want;
+            Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} {label}: {(said.Count > 0 ? string.Join(" | ", said) : "(출력 없음)")}");
+            if (!ok) fails++;
+            said.Clear();
+        }
+
+        cl.OnFrame(new FrameHeader(Op.RoomShortChat, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 5), Frame.Fix32(2, 10001)));
+        ExpectChat("M1 빠른 대화", "Immediate [R?] ?5 빠른 대화: \"준비!\"");
+        Marker(5, "3, 40002, 17");
+        ExpectChat("M2 땅 마커", "Immediate [R?] ?5 마커: 이쪽으로 이동해! (17번 칸)");
+        Marker(5, "10, 6, 40008");
+        ExpectChat("M3 같은 팀 지목", "Immediate [R?] ?5 -> ?6 치유 예정");
+        Marker(5, "10, 5, 40017");
+        ExpectChat("M4 나 자신 지목", "Immediate [R?] ?5 카드 요청");
+        Marker(5, "10, 6, 40099");
+        ExpectChat("M5 표에 없는 마커는 게임 대사", "Immediate [R?] ?5 마커: ?6 새 마커 {1}");
+        Marker(5, "8, 42");
+        ExpectChat("M6 카드 공유", "Immediate [R?] ?5 공유: 나 \"폭탄\" 있어");
+        Marker(5, "9, 2");
+        ExpectChat("M7 스킬 쿨타임 공유", "Immediate [R?] ?5 공유: 스킬 쿨타임 2턴 남았어");
+        Marker(5, "9, 0");
+        ExpectChat("M8 스킬 준비 공유", "Immediate [R?] ?5 공유: 스킬 준비 완료!");
+        Marker(5, "99, 1");
+        ExpectChat("M9 모르는 종류는 남기지 않음", "");
+        var muted = new BattleLogger(log, null, false, new HashSet<int>(), false, true, chatNames) { LogChat = false };
+        muted.Mirror = (s, k, g, u, _) => said.Add(s);
+        muted.OnFrame(new FrameHeader(Op.RoomShortChat, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 5), Frame.Fix32(2, 10001)));
+        ExpectChat("M10 LogChat=false면 남기지 않음", "");
+
+        Console.WriteLine();
         Console.WriteLine("=== 파일 기록 (전용 스레드) ===");
         string file = Path.Combine(dir, "battle-log-test.txt");
         File.WriteAllText(file, "지난 판 내용\n");

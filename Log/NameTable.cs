@@ -11,6 +11,10 @@ internal sealed class NameTable
 
     public int Count => _names.Count;
 
+    public int Schema { get; private set; }
+
+    public const string SchemaPrefix = "# schema ";
+
     public static NameTable Load(string path, Action<string> warn)
     {
         var table = new NameTable();
@@ -21,6 +25,9 @@ internal sealed class NameTable
             var names = new Dictionary<string, string>();
             foreach (string line in File.ReadAllLines(path))
             {
+                if (line.StartsWith(SchemaPrefix, StringComparison.Ordinal)
+                    && int.TryParse(line.Substring(SchemaPrefix.Length), out int schema))
+                    table.Schema = schema;
                 if (line.Length == 0 || line[0] == '#') continue;
                 string[] parts = line.Split('\t');
                 if (parts.Length < 3) continue;

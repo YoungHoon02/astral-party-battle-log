@@ -94,12 +94,12 @@ class Reader:
             yield f, w
 
 
-def parse_info_table(data, name_field):
-    """Configure { 1: repeated Item {1:Id, <name_field>:NameID} } -> {id: nameId}"""
+def parse_info_table(data, name_field, list_field=1):
+    """Configure { <list_field>: repeated Item {1:Id, <name_field>:NameID} } -> {id: nameId}"""
     out = {}
     r = Reader(data)
     for f, w in r.fields():
-        if f != 1 or w != 2:
+        if f != list_field or w != 2:
             r.skip(w)
             continue
         start, n = r.chunk()
@@ -244,6 +244,21 @@ def parse_skill_table(data, active_fields, packed_fields):
 # 버프의 이름 필드는 `NameId`(14)다 — 대문자 `NameID`가 아니라서 처음에 못 찾고
 # `DescId`(15)를 썼다가 로그가 설명문으로 덮였다. 14를 쓰면 "왕의 힘", "반격" 같은
 # 짧은 이름이 나온다.
+def clean(text):
+    """Log/NameConfig.cs의 Clean과 같아야 한다."""
+    return text.replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
+
+
+CHAT_INFO = "Chat"
+CHAT_STRINGS = "STRChat"
+# ChatConfigure {1:Infos, 2:InfoDict, 3:Marks, 4:MarkDict} — 마커는 field 3 목록이고
+# ChatMarkConfigure {1:ID, 2:ChatID}의 ChatID로 문자열표와 조인한다.
+CHAT_MARK_LIST = 3
+CHAT_MARK_TEXT = 2
+
+# Log/NameConfig.cs의 Schema와 같이 올린다. 낮으면 플러그인이 names.tsv를 다시 만든다.
+SCHEMA = 2
+
 TABLES = [
     ("card", "Card", 2, "STRCard"),
     ("skill", "Skill", 4, "STRSkill"),
@@ -307,7 +322,27 @@ def main():
             hit += 1
         print(f"  {kind}: {hit}/{len(table)}개", file=sys.stderr)
 
+    # 빠른 대화 문구는 id 그대로, 마커는 마커 id → 문구 id → 문자열로 두 번 찾는다.
+    chat_str_path = os.path.join(src, CHAT_STRINGS)
+    if os.path.exists(chat_str_path):
+        texts = parse_string_table(open(chat_str_path, "rb").read())
+        for ident, text in sorted(texts.items()):
+            rows.append(("chat", ident, clean(text)))
+        print(f"  chat: {len(texts)}개", file=sys.stderr)
+        chat_info_path = os.path.join(src, CHAT_INFO)
+        if os.path.exists(chat_info_path):
+            marks = parse_info_table(open(chat_info_path, "rb").read(), CHAT_MARK_TEXT, CHAT_MARK_LIST)
+            hit = 0
+            for ident, chat_id in sorted(marks.items()):
+                if chat_id in texts:
+                    rows.append(("chatmark", ident, clean(texts[chat_id])))
+                    hit += 1
+            print(f"  chatmark: {hit}/{len(marks)}개", file=sys.stderr)
+    else:
+        print(f"  건너뜀: chat ({CHAT_STRINGS} 없음)", file=sys.stderr)
+
     with open(dest, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(f"# schema {SCHEMA}\n")
         fh.write("# kind\tid\tname — tools/extract_names.py 가 생성. 직접 고치지 말 것\n")
         for kind, ident, text in rows:
             fh.write(f"{kind}\t{ident}\t{text}\n")

@@ -47,6 +47,11 @@ public class Plugin : BasePlugin
             "서버가 uid만 보내서 '카드 제출'까지만 남는다. 손패 변경(HeroAttrEffect.Card)은 " +
             "이 옵션과 무관하게 디코딩하지 않는다.");
 
+        ConfigEntry<bool> logChat = Config.Bind(
+            "Output", "LogChat", true,
+            "전투 중 받은 빠른 대화와 마커·정보 공유(카드/칩/스킬 핑)를 남긴다. " +
+            "차단한 플레이어의 메시지도 서버는 보내므로 함께 남는다.");
+
         ConfigEntry<bool> showOverlay = Config.Bind(
             "Overlay", "Enabled", true,
             "전투 로그를 게임 화면에 겹쳐 보여준다.");
@@ -105,7 +110,10 @@ public class Plugin : BasePlugin
         var cache = new RosterCache(cachePath, Log.LogWarning);
 
         var logger = new BattleLogger(Log, path, traceFrames.Value, dumpSet,
-                                      logPlayerIds.Value, logCards.Value, names, cache);
+                                      logPlayerIds.Value, logCards.Value, names, cache)
+        {
+            LogChat = logChat.Value,
+        };
         _logger = logger;
         SocketTap.OnFrame = logger.OnFrame;
         // 순수 .NET 이벤트라 IL2CPP 델리게이트 등록 금지에 걸리지 않는다.

@@ -42,9 +42,18 @@ internal static class NameConfig
     // 한국어(6) → 영어(3) → 간체(2). 한글패치 INT 빌드는 영어 슬롯에 한국어를 넣는다.
     private static readonly int[] LanguageOrder = { 6, 3, 2 };
 
+    // 빠른 대화는 문구 id를 그대로 보내고, 마커는 마커 id를 보내 Chat.Marks(3)에서 문구 id를 찾는다.
+    private const string ChatInfo = "Chat";
+    private const string ChatStrings = "STRChat";
+    private const int ChatMarkList = 3;
+    private const int ChatMarkTextField = 2;
+
+    // 표 구성이 바뀌면 올린다. 옛 names.tsv는 다음 실행에 다시 만들어진다.
+    public const int Schema = 2;
+
     public static HashSet<string> Required()
     {
-        var wanted = new HashSet<string>();
+        var wanted = new HashSet<string> { ChatInfo, ChatStrings };
         foreach (var t in Tables) { wanted.Add(t.Info); wanted.Add(t.Strings); }
         foreach (var e in Enums) wanted.Add(e.Info);
         foreach (var sk in Skills) wanted.Add(sk.Info);
@@ -82,13 +91,24 @@ internal static class NameConfig
                 if (labels.Count > 0) rows.Add((kind, id, string.Join(", ", labels)));
             }
 
+        if (assets.ContainsKey(ChatStrings))
+        {
+            Dictionary<long, string> texts = ParseStrings(assets[ChatStrings]);
+            foreach ((long id, string text) in texts.OrderBy(kv => kv.Key))
+                rows.Add(("chat", id, Clean(text)));
+            if (assets.ContainsKey(ChatInfo))
+                foreach ((long id, long chatId) in ParseInfo(assets[ChatInfo], ChatMarkTextField, ChatMarkList).OrderBy(kv => kv.Key))
+                    if (texts.TryGetValue(chatId, out string? text))
+                        rows.Add(("chatmark", id, Clean(text)));
+        }
+
         return rows;
     }
 
-    private static Dictionary<long, long> ParseInfo(byte[] data, int nameField)
+    private static Dictionary<long, long> ParseInfo(byte[] data, int nameField, int listField = 1)
     {
         var map = new Dictionary<long, long>();
-        foreach (ProtoReader item in Items(data))
+        foreach (ProtoReader item in Items(data, listField))
         {
             (long id, long value) = TwoNumbers(item, nameField);
             if (id != 0 && value != 0) map[id] = value;
@@ -175,12 +195,12 @@ internal static class NameConfig
         return map;
     }
 
-    private static IEnumerable<ProtoReader> Items(byte[] data)
+    private static IEnumerable<ProtoReader> Items(byte[] data, int listField = 1)
     {
         var r = new ProtoReader(data, 0, data.Length);
         while (r.NextField(out int f, out int w))
         {
-            if (f == 1 && w == ProtoReader.WireLength)
+            if (f == listField && w == ProtoReader.WireLength)
             {
                 if (!r.TryReadMessage(out ProtoReader item)) yield break;
                 yield return item;

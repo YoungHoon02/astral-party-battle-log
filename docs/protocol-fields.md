@@ -50,6 +50,8 @@ python tools/dump_tags.py <디컴파일루트> HeroHpChangeS2C
 | 〃 | **최대 체력에서 회복을 받아도 `RealChangeHp`가 0이 아니다** (실측 10건, 전부 `CurrHp == MaxHp`). `CurrHp`와 `RealHp` 중 무엇이 화면 HP인지는 미확정 |
 | `HeroBuffChangeS2C` | 한 메시지에 동일한 스킬·대상 버프가 여러 번 들어올 수 있다. 대상이 다르면 각각 남기고, 같은 `(스킬, 대상)`만 중복 제거한다 |
 | `TimeWastingS2C`(5308) | 결정 창 열림·닫힘 때 응답으로 온다. 측정 3에서 `UPSN != 0`, 본문 길이는 열림 14바이트·닫힘 9바이트였다. 동기화에는 헤더만 사용하고 본문은 해석하지 않는다 |
+| `RoomShortChatS2C`(5150) | `Index`는 목록 순번이 아니라 `STRChat` 문구 id다(`ExpressionWindow`가 `ChatInfoConfigure.ChatID`를 그대로 보낸다) |
+| `ChatMapMarkersS2C`(5238) | `Msg`는 `"종류, 인자, …"` 문자열이고 쉼표 뒤에 공백이 있다. C2S의 `MarkId`(2)는 S2C에 없어서 마커 id는 Msg 안에서 읽는다 |
 | `HeartbeatS2C`(5004) | 주기적인 응답이라 `UPSN != 0`이어도 화면 동기화 근거가 아니다. 본문을 해석하거나 허용목록에 넣지 않는다 |
 
 프레임 헤더의 `UPSN`은 우리 요청에 대응하는 응답 번호다(`FrameReassembler`가 읽는다).
@@ -312,4 +314,16 @@ python tools/dump_tags.py <디컴파일루트> HeroHpChangeS2C
 ===== MonsterRefreshS2C =====
     1 Monster                len    WriteMessage   (IMessage
                              └ 선언: Player
+
+===== RoomShortChatS2C =====
+    1 PlayerId               fix64  WriteSFixed64  PlayerId
+                             └ 선언: long
+    2 Index                  fix32  WriteSFixed32  Index
+                             └ 선언: int
+
+===== ChatMapMarkersS2C =====
+    1 PlayerId               fix64  WriteSFixed64  PlayerId
+                             └ 선언: long
+    2 Msg                    len    WriteString    Msg
+                             └ 선언: string
 ```
