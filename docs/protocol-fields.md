@@ -41,7 +41,7 @@ python tools/dump_tags.py <디컴파일루트> HeroHpChangeS2C
 
 | 메시지 | 사실 |
 | --- | --- |
-| `MonsterRefreshS2C`(1018) | **몹 명단은 `Room`이 아니라 여기서 온다.** Room만 읽으면 전투 상대가 전부 `?id`로 남는다 |
+| `MonsterRefreshS2C`(1018) | **몹 명단은 `Room`이 아니라 여기서 온다.** Room만 읽으면 전투 상대가 전부 `?번호`로 남는다 |
 | `BattleUseCardS2C`(5036) | 공개 전에는 `CardId == 0`으로 온다. 게임도 그때만 "준비 완료" 표시를 띄운다(`FightLogic`) |
 | 〃 | **한 PK에 여러 장 낼 수 있다** (`RoundStartS2C.UseCardMaxNum`). 실측에서 한 사람이 3장을 냈다 — 제출 줄을 묶으면 안 되고, 같은 `CardId`(uid)가 다시 올 때만 막는다 |
 | `RoundStartS2C`(1015) | `PlayerId`(5)는 **받는 사람 자신**이다. 라운드 보상 골드·카드가 사람마다 달라 따로 보낸다(`BattleLogic.OnRoundStartS2C`가 자기 id와 비교). 첫 행동자가 아니므로 차례 주인으로 쓰지 않는다 |

@@ -64,6 +64,9 @@ class Program
     static byte[] Cause(long source, long id) =>
         Frame.Msg(2, Frame.Cat(Frame.Varint(1, (ulong)source), Frame.Fix64(3, id)));
 
+    // 명단에 없는 id는 "?번호"로 찍힌다. "[R?]"는 라운드 표시라 숫자가 붙지 않는다.
+    static bool Unresolved(string line) => System.Text.RegularExpressions.Regex.IsMatch(line, @"\?\d");
+
     static void Main(string[] args)
     {
         // 재생 기록 검증용 자식 프로세스 모드(sched / scenario / replay). 사람이 직접 재생할 때도 쓴다:
@@ -246,9 +249,9 @@ class Program
              BuffOp(950, 31, 101, 2), BuffOp(950, 32, 102, 2), BuffOp(950, 33, 103, 2),
              BuffOp(951, 34, 104, 2), BuffOp(952, 35, 105, 2));
         Console.WriteLine("=== 쓰러짐 버프 해제 묶기 ===");
-        bool l1 = fell.Exists(l => l == "버프 해제 ?950 3개 (쓰러짐)") && !fell.Exists(l => l.StartsWith("버프 해제 ?950 ") && !l.EndsWith("(쓰러짐)"));
-        bool l2 = fell.Exists(l => l.StartsWith("버프 해제 ?951") && !l.Contains("쓰러짐"));
-        bool l3 = fell.Exists(l => l.StartsWith("버프 해제 ?952") && !l.Contains("개 (쓰러짐)"));
+        bool l1 = fell.Exists(l => l == "버프 해제 ?1 3개 (쓰러짐)") && !fell.Exists(l => l.StartsWith("버프 해제 ?1 ") && !l.EndsWith("(쓰러짐)"));
+        bool l2 = fell.Exists(l => l.StartsWith("버프 해제 ?2") && !l.Contains("쓰러짐"));
+        bool l3 = fell.Exists(l => l.StartsWith("버프 해제 ?3") && !l.Contains("개 (쓰러짐)"));
         Console.WriteLine($"  {(l1 ? "OK  " : "FAIL")} L1 쓰러진 대상의 해제 3개 → 한 줄");
         Console.WriteLine($"  {(l2 ? "OK  " : "FAIL")} L2 살아 있는 대상은 그대로");
         Console.WriteLine($"  {(l3 ? "OK  " : "FAIL")} L3 해제가 하나면 원래 줄 유지");
@@ -312,13 +315,13 @@ class Program
         });
         var nCases = new (string Label, List<string> Got, string[] Want)[]
         {
-            ("N1 차례 주인이 아닌 사람이 받은 골드 → 받은 사람이 주어", n1, new[] { "[R?] ?831", "?831 골드 8→15  +7", "· ?830 행동 시작" }),
-            ("N2 차례 주인이 받은 것 → 그대로 차례 주인", n2, new[] { "[R?] ?830", "치유 ?830 3→1 (-2)" }),
-            ("N3 여러 명이 받은 것 → 주어 없이 원인만", n3, new[] { "[R?] (라운드 보상)", "?832 골드 4→10  +6", "?833 골드 14→19  +5" }),
-            ("N4 스택 이름은 게임 버프 이름", n4, new[] { "[R?] ?831", "【표식】 ?831 0→2 (+2)" }),
-            ("N5 레벨 업", n5, new[] { "[R?] ?830", "?830 골드 18→3  -15", "?830 레벨 업 → Lv1" }),
-            ("N6 카드 이름과 같은 버프는 카드 줄에 잇는다", n6, new[] { "[R?] ?830 효과카드 \"폭탄\"", "버프 부여 ?830 \"폭탄\"" }),
-            ("N7 다른 이름의 버프는 따로 머리줄", n7, new[] { "[R?] ?830 효과카드 \"폭탄\"", "[R?] ?830", "버프 부여 ?830 \"광폭\"" }),
+            ("N1 차례 주인이 아닌 사람이 받은 골드 → 받은 사람이 주어", n1, new[] { "[R?] ?2", "?2 골드 8→15  +7", "· ?1 행동 시작" }),
+            ("N2 차례 주인이 받은 것 → 그대로 차례 주인", n2, new[] { "[R?] ?1", "치유 ?1 3→1 (-2)" }),
+            ("N3 여러 명이 받은 것 → 주어 없이 원인만", n3, new[] { "[R?] (라운드 보상)", "?3 골드 4→10  +6", "?4 골드 14→19  +5" }),
+            ("N4 스택 이름은 게임 버프 이름", n4, new[] { "[R?] ?2", "【표식】 ?2 0→2 (+2)" }),
+            ("N5 레벨 업", n5, new[] { "[R?] ?1", "?1 골드 18→3  -15", "?1 레벨 업 → Lv1" }),
+            ("N6 카드 이름과 같은 버프는 카드 줄에 잇는다", n6, new[] { "[R?] ?1 효과카드 \"폭탄\"", "버프 부여 ?1 \"폭탄\"" }),
+            ("N7 다른 이름의 버프는 따로 머리줄", n7, new[] { "[R?] ?1 효과카드 \"폭탄\"", "[R?] ?1", "버프 부여 ?1 \"광폭\"" }),
         };
         foreach (var c in nCases)
         {
@@ -347,7 +350,7 @@ class Program
         Hit(3187, 9300);
         bool o1 = spawn.Count == 0;
         Monster(3187, 3187);
-        bool o2 = At("→ 도둑") >= 0 && At("?3187") < 0;
+        bool o2 = At("→ 도둑") >= 0 && !spawn.Exists(Unresolved);
         var o2Lines = new List<string>(spawn);
 
         spawn.Clear();
@@ -362,35 +365,35 @@ class Program
         spawn.Clear();
         Hit(3500, 9303);
         for (int i = 1; i < BattleLogger.DeferFrames; i++) Beat();
-        bool o4a = At("?3500") < 0;
+        bool o4a = !spawn.Exists(Unresolved);
         Beat();
-        bool o4 = o4a && At("?3500") >= 0;
+        bool o4 = o4a && spawn.Exists(Unresolved) && At("3500") < 0;
         var o4Lines = new List<string>(spawn);
 
         spawn.Clear();
         Hit(3501, 9304);
         System.Threading.Thread.Sleep(BattleLogger.DeferWindow + TimeSpan.FromMilliseconds(50));
         Monster(3502, 0);
-        bool o5 = At("?3501") >= 0;
+        bool o5 = spawn.Exists(Unresolved);
         var o5Lines = new List<string>(spawn);
 
         spawn.Clear();
         Hit(3503, 9305);
         ol.OnFrame(new FrameHeader(Op.MatchSuccess, 0, 0, 0), Array.Empty<byte>());
         for (int i = 0; i <= BattleLogger.DeferFrames; i++) Beat();
-        bool o6 = At("?3503") < 0;
+        bool o6 = !spawn.Exists(Unresolved);
 
         spawn.Clear();
         Monster(830, 0);
         Hit(4343, 9306);
         ol.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(4000, 4343, "방닉", 1, 1002));
-        bool o7 = At("→ 루루") >= 0 && At("?4343") < 0;
+        bool o7 = At("→ 루루") >= 0 && !spawn.Exists(Unresolved);
         var o7Lines = new List<string>(spawn);
 
         Console.WriteLine($"  {(o1 ? "OK  " : "FAIL")} O1 모르는 대상이 든 결과는 등록을 기다린다");
         Console.WriteLine($"  {(o2 ? "OK  " : "FAIL")} O2 등록이 온 그 프레임에 이름을 붙여 나온다: [{string.Join(" / ", o2Lines)}]");
         Console.WriteLine($"  {(o3 ? "OK  " : "FAIL")} O3 연속 미확정은 뒤가 먼저 풀려도 도착 순서대로: [{string.Join(" / ", o3Lines)}]");
-        Console.WriteLine($"  {(o4 ? "OK  " : "FAIL")} O4 {BattleLogger.DeferFrames}프레임 안에 등록이 없으면 ?id로 확정: [{string.Join(" / ", o4Lines)}]");
+        Console.WriteLine($"  {(o4 ? "OK  " : "FAIL")} O4 {BattleLogger.DeferFrames}프레임 안에 등록이 없으면 id 대신 ?번호로 확정:[{string.Join(" / ", o4Lines)}]");
         Console.WriteLine($"  {(o5 ? "OK  " : "FAIL")} O5 몬스터 등록만 이어져도 {BattleLogger.DeferWindow.TotalMilliseconds}ms가 지나면 확정: [{string.Join(" / ", o5Lines)}]");
         Console.WriteLine($"  {(o6 ? "OK  " : "FAIL")} O6 새 판이 시작되면 대기 항목은 넘어가지 않는다");
         Console.WriteLine($"  {(o7 ? "OK  " : "FAIL")} O7 명단(RunningGame)으로 풀려도 그 프레임에 나온다: [{string.Join(" / ", o7Lines)}]");
@@ -492,7 +495,7 @@ class Program
             lg.Mirror = (s, k, g, u, _) => got.Add(Palette.Strip(s).Trim());
             bool gone = legacy.Count == 0 && legacy.RoomId == 0 && !File.Exists(cachePath);
             lg.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 4242));
-            return (gone && got.Exists(l => l.Contains("?4242")) && !got.Exists(l => l.Contains("테스터")), got);
+            return (gone && got.Exists(Unresolved) && !got.Exists(l => l.Contains("4242") || l.Contains("테스터")), got);
         }
         var q5 = Legacy("# roster cache v2 (keys are hashed; see RosterCache.cs)");
         var q6 = Legacy(null);
@@ -529,7 +532,7 @@ class Program
         r3.Mirror = (s, k, g, u, _) => r3Lines.Add(Palette.Strip(s).Trim());
         r3.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Room(999, 7171, "새방", 0, 1001));
         r3.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 6161));
-        bool r2ok = r3Lines.Exists(l => l.Contains("?6161"));
+        bool r2ok = r3Lines.Exists(l => Unresolved(l) && l.Contains("행동 시작"));
 
         if (File.Exists(cachePath)) File.Delete(cachePath);
         var cacheF = new RosterCache(cachePath, _ => { });
@@ -542,7 +545,7 @@ class Program
         var r5Lines = new List<string>();
         r5.Mirror = (s, k, g, u, _) => r5Lines.Add(Palette.Strip(s).Trim());
         r5.OnFrame(new FrameHeader(Op.ActionStartNotify, 0, 0, 0), Frame.Fix64(1, 8181));
-        bool r3ok = r5Lines.Exists(l => !l.Contains("?8181"));
+        bool r3ok = r5Lines.Count > 0 && !r5Lines.Exists(Unresolved);
 
         Console.WriteLine($"  {(r1ok ? "OK  " : "FAIL")} R1 판을 나가면 캐시 파일이 사라진다");
         Console.WriteLine($"  {(r2ok ? "OK  " : "FAIL")} R2 다른 방이면 지난 판 캐시를 쓰지 않는다: [{string.Join(" / ", r3Lines)}]");
@@ -622,27 +625,38 @@ class Program
         }
 
         cl.OnFrame(new FrameHeader(Op.RoomShortChat, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 5), Frame.Fix32(2, 10001)));
-        ExpectChat("M1 빠른 대화", "Immediate [R?] ?5 빠른 대화: \"준비!\"");
+        ExpectChat("M1 빠른 대화", "Immediate [R?] ?1 빠른 대화: \"준비!\"");
         Marker(5, "3, 40002, 17");
-        ExpectChat("M2 땅 마커", "Immediate [R?] ?5 마커: 이쪽으로 이동해! (17번 칸)");
+        ExpectChat("M2 땅 마커", "Immediate [R?] ?1 마커: 이쪽으로 이동해! (17번 칸)");
         Marker(5, "10, 6, 40008");
-        ExpectChat("M3 같은 팀 지목", "Immediate [R?] ?5 -> ?6 치유 예정");
+        ExpectChat("M3 같은 팀 지목", "Immediate [R?] ?1 -> ?2 치유 예정");
         Marker(5, "10, 5, 40017");
-        ExpectChat("M4 나 자신 지목", "Immediate [R?] ?5 카드 요청");
+        ExpectChat("M4 나 자신 지목", "Immediate [R?] ?1 카드 요청");
         Marker(5, "10, 6, 40099");
-        ExpectChat("M5 표에 없는 마커는 게임 대사", "Immediate [R?] ?5 마커: ?6 새 마커 {1}");
+        ExpectChat("M5 표에 없는 마커는 게임 대사", "Immediate [R?] ?1 마커: ?2 새 마커 {1}");
         Marker(5, "8, 42");
-        ExpectChat("M6 카드 공유", "Immediate [R?] ?5 공유: 나 \"폭탄\" 있어");
+        ExpectChat("M6 카드 공유", "Immediate [R?] ?1 공유: 나 \"폭탄\" 있어");
         Marker(5, "9, 2");
-        ExpectChat("M7 스킬 쿨타임 공유", "Immediate [R?] ?5 공유: 스킬 쿨타임 2턴 남았어");
+        ExpectChat("M7 스킬 쿨타임 공유", "Immediate [R?] ?1 공유: 스킬 쿨타임 2턴 남았어");
         Marker(5, "9, 0");
-        ExpectChat("M8 스킬 준비 공유", "Immediate [R?] ?5 공유: 스킬 준비 완료!");
+        ExpectChat("M8 스킬 준비 공유", "Immediate [R?] ?1 공유: 스킬 준비 완료!");
         Marker(5, "99, 1");
         ExpectChat("M9 모르는 종류는 남기지 않음", "");
         var muted = new BattleLogger(log, null, false, new HashSet<int>(), false, true, chatNames) { LogChat = false };
         muted.Mirror = (s, k, g, u, _) => said.Add(s);
         muted.OnFrame(new FrameHeader(Op.RoomShortChat, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 5), Frame.Fix32(2, 10001)));
         ExpectChat("M10 LogChat=false면 남기지 않음", "");
+
+        var diagLog = new ManualLogSource("chat-diag");
+        var diag = new List<string>();
+        diagLog.LogEvent += (_, e) => diag.Add(e.Data?.ToString() ?? "");
+        var dl2 = new BattleLogger(diagLog, null, false, new HashSet<int>(), false, true, chatNames);
+        dl2.OnFrame(new FrameHeader(Op.ChatMapMarkers, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 1451909), Str(2, "99,2233445,40002")));
+        string unhandled = diag.Find(l => l.Contains("unhandled marker")) ?? "";
+        bool m11 = unhandled.Contains("from ?1") && unhandled.Contains("40002")
+                   && !unhandled.Contains("1451909") && !unhandled.Contains("2233445");
+        Console.WriteLine($"  {(m11 ? "OK  " : "FAIL")} M11 처리 못 한 마커 진단에 계정 uid를 남기지 않음: {unhandled}");
+        if (!m11) fails++;
 
         Console.WriteLine();
         Console.WriteLine("=== 파일 기록 (전용 스레드) ===");
@@ -655,7 +669,9 @@ class Program
         for (int i = 0; i < 500; i++) fl.OnFrame(new FrameHeader(Op.ThrowDice, 0, 0, 0), Frame.Cat(Frame.Fix32(1, 3), Frame.Fix64(3, 2)));
         fl.Close();
         string[] got = File.ReadAllLines(file);
-        bool clean = got.Length == 501 && got[0].EndsWith("· ?2 행동 시작") && !Array.Exists(got, l => l.Contains("지난 판") || l.Contains("?1 행동"));
+        // 새 판은 명단 번호도 다시 매기므로 줄 2의 대상이 ?1이다. 비우기 전의 줄 1이 남았다면 "행동 시작"이 둘이 된다.
+        bool clean = got.Length == 501 && got[0].EndsWith("· ?1 행동 시작")
+                     && Array.FindAll(got, l => l.Contains("행동 시작")).Length == 1 && !Array.Exists(got, l => l.Contains("지난 판"));
         bool stamped = Array.TrueForAll(got, l => l.Length > 13 && l[2] == ':' && l[12] == ' ');
         Console.WriteLine($"  {(clean ? "OK  " : "FAIL")} F1 비우기 뒤의 줄만 남고 순서 유지 ({got.Length}줄, 첫 줄: {got[0]})");
         Console.WriteLine($"  {(stamped ? "OK  " : "FAIL")} F2 모든 줄에 시각이 찍힘");

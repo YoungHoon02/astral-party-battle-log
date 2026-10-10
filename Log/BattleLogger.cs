@@ -451,7 +451,7 @@ internal sealed class BattleLogger
             }
         }
         // uid는 종류를 알 수 없는 런타임 값이라 진단에만 남긴다.
-        if (_traceUnknown) Diag($"battle-card pid={pid} cardUid={cardId} noCard={noCard}");
+        if (_traceUnknown) Diag($"battle-card pid={Who(pid)} cardUid={cardId} noCard={noCard}");
 
         if (noCard != 0)
         {
@@ -597,7 +597,7 @@ internal sealed class BattleLogger
 
         if (line is null)
         {
-            Diag($"[chat] unhandled marker from {pid}: '{msg}'");
+            Diag($"[chat] unhandled marker from {Who(pid)}: '{MaskIds(parts)}'");
             return;
         }
         Emit($"{RoundTag} {line}");
@@ -610,6 +610,14 @@ internal sealed class BattleLogger
             return target == pid ? $"{who} {action}" : $"{who} -> {whom} {action}";
         return ChatText("chatmark", markId, whom) is { } t ? $"{who} 마커: {t}" : null;
     }
+
+    // 처리하지 못한 마커는 인자 모양을 봐야 하지만, 플레이어 마커의 대상 인자가 계정 uid다.
+    // 마커 인자로 오는 설정 id(마커 문구·칸·카드·칩·이벤트)는 모두 100만 미만이라, 명단에 없는 큰 수는 uid로 보고 가린다.
+    private string MaskIds(string[] parts) => string.Join(",", parts.Select(p =>
+        !long.TryParse(p.Trim(), out long v) ? p
+        : _roster.IsCharacter(v) ? Who(v)
+        : Math.Abs(v) >= 1_000_000 ? "#"
+        : p));
 
     private static string? Shared(string who, string? text) => text is null ? null : $"{who} 공유: {text}";
 
@@ -1148,9 +1156,9 @@ internal sealed class BattleLogger
         // 걸러낸 메시지야말로 원본 값을 봐야 하므로 진단은 필터보다 먼저 남긴다.
         if (_traceUnknown && (filtered.Length > 0 || ori == curr || change != real
                               || (realHp != 0 && realHp != curr)))
-            Diag($"hp filtered={(filtered.Length > 0 ? filtered : "no")} pid={pid} "
+            Diag($"hp filtered={(filtered.Length > 0 ? filtered : "no")} pid={Who(pid)} "
                  + $"ori={ori} curr={curr} change={change} real={real} realHp={realHp} "
-                 + $"max={max} dmg={kind} killer={killer}");
+                 + $"max={max} dmg={kind} killer={Who(killer)}");
 
         if (filtered.Length > 0) return "";
 
@@ -1618,6 +1626,9 @@ internal sealed class BattleLogger
     };
 
     private void Diag(string line) => _log.LogInfo(line);
+
+    // 진단 줄에도 playerId(영구 계정 uid)를 원문으로 찍지 않는다.
+    private string Who(long id) => Palette.Strip(_roster.Name(id));
 
     private void WriteFile(string plain) => _file?.Append(plain);
 }

@@ -30,10 +30,14 @@ internal sealed class Roster
 
     public Roster(NameTable table) => _table = table;
 
+    // 명단에 없는 id에 판 안에서만 유지되는 번호를 준다. 플레이어 id는 영구 계정 uid라 그대로 쓰면 로그에 남는다.
+    private readonly Dictionary<long, int> _unknown = new();
+
     public void Clear()
     {
         _entries.Clear();
         _kindCount.Clear();
+        _unknown.Clear();
     }
 
     public string Name(long id)
@@ -42,9 +46,15 @@ internal sealed class Roster
         if (!_entries.TryGetValue(id, out Entry? e))
         {
             // 몹으로 단정하면 명단이 늦게 올 때 플레이어가 조용히 몹으로 찍힌다.
-            if (!Restore(id, out e)) return $"?{id}";
+            if (!Restore(id, out e)) return $"?{Unknown(id)}";
         }
         return Palette.Player(Label(e), e.Slot);
+    }
+
+    private int Unknown(long id)
+    {
+        if (!_unknown.TryGetValue(id, out int n)) _unknown[id] = n = _unknown.Count + 1;
+        return n;
     }
 
     private bool Restore(long id, [NotNullWhen(true)] out Entry? entry)
