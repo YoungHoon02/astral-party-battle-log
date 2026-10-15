@@ -10,7 +10,7 @@
     <AssemblyName>AstralPartyBattleLogUpdater</AssemblyName>
     <RootNamespace>AstralPartyBattleLog.Updater</RootNamespace>
     <!-- build-release.ps1이 플러그인 버전으로 덮어쓴다. 비교 기준은 옆의 플러그인 DLL이다. -->
-    <Version>0.3.3</Version>
+    <Version>0.3.4</Version>
   </PropertyGroup>
 
   <ItemGroup>
