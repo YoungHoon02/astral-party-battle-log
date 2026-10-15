@@ -44,6 +44,18 @@ internal sealed class NameTable
 
     public void Adopt(Dictionary<string, string> fresh) => _names = fresh;
 
+    public (int Added, int Changed, int Removed) Compare(Dictionary<string, string> fresh)
+    {
+        Dictionary<string, string> current = _names;
+        int added = 0, changed = 0;
+        foreach (var kv in fresh)
+        {
+            if (!current.TryGetValue(kv.Key, out string? old)) added++;
+            else if (old != kv.Value) changed++;
+        }
+        return (added, changed, current.Count - (fresh.Count - added));
+    }
+
     public static string Key(string kind, long id) => $"{kind} {id}";
 
     public string? Lookup(string kind, long id) =>
