@@ -96,16 +96,11 @@ public class Plugin : BasePlugin
         foreach (string part in hexDump.Value.Split(',', StringSplitOptions.RemoveEmptyEntries))
             if (int.TryParse(part.Trim(), out int op) && Op.Allowed.Contains(op)) dumpSet.Add(op);
 
-        ConfigEntry<bool> rebuildNames = Config.Bind(
-            "Names", "Rebuild", false,
-            "다음 실행에서 names.tsv를 다시 만든다. 게임이 업데이트돼 카드/스킬 이름이 " +
-            "어긋날 때 켠다. 파일을 지워도 같은 효과다.");
-
         string namesPath = Path.Combine(Paths.PluginPath, "AstralPartyBattleLog", "names.tsv");
         var names = NameTable.Load(namesPath, Log.LogWarning);
         if (names.Count > 0) Log.LogInfo($"Loaded {names.Count} names.");
 
-        NameHarvest.Arm(Log, names, namesPath, rebuildNames.Value);
+        NameHarvest.Arm(Log, names, namesPath);
 
         ConfigEntry<bool> checkRelease = Config.Bind(
             "Update", "CheckRelease", true,
