@@ -1,6 +1,9 @@
 # Astral Party Battle Log
 
-[![Latest release](https://img.shields.io/github/v/release/YoungHoon02/astral-party-battle-log?sort=semver&style=for-the-badge&logo=github&label=download)](../../releases)
+[![최신 릴리스](https://img.shields.io/github/v/release/YoungHoon02/astral-party-battle-log?label=%EC%B5%9C%EC%8B%A0%20%EB%A6%B4%EB%A6%AC%EC%8A%A4&color=2ea44f)](../../releases/latest)
+[![다운로드](https://img.shields.io/github/downloads/YoungHoon02/astral-party-battle-log/total?label=%EB%8B%A4%EC%9A%B4%EB%A1%9C%EB%93%9C)](../../releases)
+[![BepInEx 6 IL2CPP](https://img.shields.io/badge/BepInEx-6%20IL2CPP-blue)](https://builds.bepinex.dev/projects/bepinex_be)
+[![라이선스](https://img.shields.io/github/license/YoungHoon02/astral-party-battle-log?label=%EB%9D%BC%EC%9D%B4%EC%84%A0%EC%8A%A4)](LICENSE)
 
 Astral Party의 전투 흐름을 라운드별로 정리해 주는 BepInEx 플러그인입니다.
 게임 안에서는 오버레이로 확인할 수 있고, 같은 내용이 `battle-log.txt`에도 저장됩니다.
@@ -155,6 +158,20 @@ Astral Party의 전투 흐름을 라운드별로 정리해 주는 BepInEx 플러
 그대로 풀어 주세요. `BepInEx` 폴더가 `BepInEx/BepInEx`처럼 한 단계 더 중첩되면 플러그인이
 로드되지 않으므로, 게임 폴더 바로 아래에 `BepInEx` 폴더가 있어야 합니다. 처음 설치한
 BepInEx는 게임을 한 번 실행해야 필요한 파일과 설정을 생성합니다.
+
+### 2. UnityLogListening 비활성화
+
+> [!CAUTION]
+> BepInEx를 새로 설치했다면 반드시 확인해야 합니다. 이 게임에서는
+> <code>UnityLogListening = true</code>가 시작 직후 <code>AccessViolationException</code>을 일으킬 수 있습니다.
+
+게임을 한 번 실행해 <code>BepInEx\config\BepInEx.cfg</code>가 생성된 다음 아래 값을
+<code>false</code>로 바꿉니다.
+
+~~~ini
+[Logging]
+UnityLogListening = false
+~~~
 
 **카드/스킬 이름표(`names.tsv`)는 따로 받지 않아도 됩니다.** 플러그인이 게임을 켤 때마다
 게임 설정과 대조해 새 카드·몹·스킬이나 바뀐 번역을 반영합니다. 처음 만들어지기 전까지는
