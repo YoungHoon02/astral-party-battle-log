@@ -49,11 +49,17 @@ internal static class NameConfig
     private const int ChatMarkTextField = 2;
 
     // 표 구성이 바뀌면 올린다. 옛 names.tsv는 다음 실행에 다시 만들어진다.
-    public const int Schema = 2;
+    public const int Schema = 3;
+
+    // 건물에는 이름표가 없다. 그 건물을 놓는 카드의 이름을 빌린다
+    // (CardInfoConfigure.Params 둘째 값이 건물 id, sint32 zigzag packed).
+    private const string BuildInfo = "Build";
+    private const int CardParams = 20;
+    private const int CardBuildingIndex = 1;
 
     public static HashSet<string> Required()
     {
-        var wanted = new HashSet<string> { ChatInfo, ChatStrings };
+        var wanted = new HashSet<string> { ChatInfo, ChatStrings, BuildInfo };
         foreach (var t in Tables) { wanted.Add(t.Info); wanted.Add(t.Strings); }
         foreach (var e in Enums) wanted.Add(e.Info);
         foreach (var sk in Skills) wanted.Add(sk.Info);
@@ -91,6 +97,16 @@ internal static class NameConfig
                 if (labels.Count > 0) rows.Add((kind, id, string.Join(", ", labels)));
             }
 
+        if (assets.ContainsKey(BuildInfo) && assets.ContainsKey("Card"))
+        {
+            var buildings = new HashSet<long>(ParseValues(assets[BuildInfo], 2).Keys);
+            var cardNames = rows.Where(r => r.Kind == "card").ToDictionary(r => r.Id, r => r.Text);
+            foreach (ProtoReader item in Items(assets["Card"]))
+                if (CardBuilding(item) is { } pair && buildings.Contains(pair.Building)
+                    && cardNames.TryGetValue(pair.Card, out string? cardName))
+                    rows.Add(("building", pair.Building, cardName));
+        }
+
         if (assets.ContainsKey(ChatStrings))
         {
             Dictionary<long, string> texts = ParseStrings(assets[ChatStrings]);
@@ -103,6 +119,34 @@ internal static class NameConfig
         }
 
         return rows;
+    }
+
+    private static (long Card, long Building)? CardBuilding(ProtoReader item)
+    {
+        long id = 0;
+        var values = new List<long>();
+        while (item.NextField(out int f, out int w))
+        {
+            if (f == CardParams && w == ProtoReader.WireLength)
+            {
+                if (!item.TryReadMessage(out ProtoReader chunk)) return null;
+                while (chunk.HasMore && chunk.TryReadVarint(out ulong raw))
+                    values.Add((long)(raw >> 1) ^ -(long)(raw & 1));
+            }
+            else if (w == ProtoReader.WireLength)
+            {
+                if (!item.Skip(w)) return null;
+            }
+            else if (!item.TryReadNumber(w, out long v))
+            {
+                return null;
+            }
+            else if (f == 1)
+            {
+                id = v;
+            }
+        }
+        return id != 0 && values.Count > CardBuildingIndex ? (id, values[CardBuildingIndex]) : null;
     }
 
     private static Dictionary<long, long> ParseInfo(byte[] data, int nameField, int listField = 1)

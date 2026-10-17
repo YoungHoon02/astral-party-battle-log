@@ -42,6 +42,10 @@ internal static class Op
     public const int LandBuffs = 1013;
     public const int HeroSkillMoveEffect = 1096;
 
+    public const int Heartbeat = 5004;
+    public const int PredictAction = 1002;
+    public const int RoomHeroCardChange = 1109;
+
     public const int ChatMapMarkers = 5238;
     public const int RoomShortChat = 5150;
 
@@ -150,6 +154,7 @@ internal static class CauseSource
         21 => ("보스 합체", null),
         22 => ("방 규칙", null),
         23 => ("럭키스타", null),
+        24 => ("건물", "building"),
         _ => ($"원인{s}", null),
     };
 }

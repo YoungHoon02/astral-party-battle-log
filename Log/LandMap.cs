@@ -10,6 +10,8 @@ internal sealed class LandMap
 
     public void Clear() => _typeByNode.Clear();
 
+    public void Set(long nodeId, long type) => _typeByNode[nodeId] = type;
+
     public long? TypeOf(long nodeId) =>
         _typeByNode.TryGetValue(nodeId, out long type) ? type : null;
 

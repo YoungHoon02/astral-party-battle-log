@@ -186,7 +186,12 @@ internal sealed class BattleLogger
 
         if (!Op.Allowed.Contains(cmdId))
         {
-            if (_traceUnknown) Diag($"skip cmd={cmdId,-5} len={body.Length}");
+            if (_traceUnknown)
+            {
+                // 손패(1109)는 남에게 보이면 안 되는 정보라 본문을 남기지 않는다.
+                bool bodyKept = body.Length > 0 && cmdId is not (Op.Heartbeat or Op.PredictAction or Op.RoomHeroCardChange);
+                Diag($"skip cmd={cmdId,-5} len={body.Length}" + (bodyKept ? $" {Hex(body, 64)}" : ""));
+            }
             return;
         }
 
@@ -1075,7 +1080,7 @@ internal sealed class BattleLogger
                 if (!r.TryReadNumber(wire, out target)) return;
                 if (target != 0) _msgTargets.Add(target);
             }
-            else if (wire == ProtoReader.WireLength && (field is 2 or 3 or 4 or 5 or 6 or 11 || Stacks.ContainsKey(field)))
+            else if (wire == ProtoReader.WireLength && (field is 2 or 3 or 4 or 5 or 6 or 11 or LandChangeField || Stacks.ContainsKey(field)))
             {
                 if (!r.TryReadMessage(out var sub)) return;
                 switch (field)
@@ -1086,6 +1091,7 @@ internal sealed class BattleLogger
                     case 5: Add(lines, DecodeStat(sub, target, 5, attack: false)); break;
                     case 6: DecodeBuff(sub, target, causeSource, causeId, lines); break;
                     case 11: Add(lines, DecodeLevel(sub, target)); break;
+                    case LandChangeField: Add(lines, DecodeLandChange(sub)); break;
                     default:
                         var (buffId, fallback) = Stacks[field];
                         Add(lines, DecodeNum(sub, target, _names.Lookup("buff", buffId) ?? fallback));
@@ -1098,6 +1104,31 @@ internal sealed class BattleLogger
                 return;
             }
         }
+    }
+
+    // HeroAttrEffect 필드 33 — 카드가 칸의 종류를 바꿨다. {1: 칸 번호, 2: 이전 종류, 3: 새 종류}.
+    // 이 메시지가 아니면 칸 종류는 판 시작 때 받은 표에서 바뀌지 않는다.
+    private const int LandChangeField = 33;
+
+    private string DecodeLandChange(ProtoReader r)
+    {
+        long node = 0, from = 0, to = 0;
+        while (r.NextField(out int field, out int wire))
+        {
+            if (!IsNumber(wire)) { if (!r.Skip(wire)) break; continue; }
+            if (!r.TryReadNumber(wire, out long v)) break;
+            switch (field)
+            {
+                case 1: node = v; break;
+                case 2: from = v; break;
+                case 3: to = v; break;
+            }
+        }
+        if (node == 0 || to == 0) return "";
+
+        _lands.Set(node, to);
+        string Name(long type) => _names.Lookup("land", type) is { } n ? $"\"{n}\"" : $"땅 {type}";
+        return $"발판 변경 {node}번 칸 {Name(from)} → {Name(to)}";
     }
 
     private string DecodeGold(ProtoReader r, long fallbackTarget)
