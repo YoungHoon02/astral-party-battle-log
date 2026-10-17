@@ -42,10 +42,6 @@ internal static class Op
     public const int LandBuffs = 1013;
     public const int HeroSkillMoveEffect = 1096;
 
-    public const int Heartbeat = 5004;
-    public const int PredictAction = 1002;
-    public const int RoomHeroCardChange = 1109;
-
     public const int ChatMapMarkers = 5238;
     public const int RoomShortChat = 5150;
 

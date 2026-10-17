@@ -439,6 +439,18 @@ python tools/extract_names.py gamedata names.tsv
   붙는다.** 대응표는 `Room.Lands`(필드 12, `map<int32, BaseLand>`)에 있다 (`LandMap`).
   이름표가 없는 원인 종류(`CauseSource.Describe`의 표가 `null`)는 id가 런타임 고유값이라
   숫자를 찍지 않는다.
+- **칸의 종류는 판 도중에 바뀐다.** 맵 기믹 카드(질주 버섯·천상의 스타후르츠·행운의
+  나무)가 칸을 다른 종류로 바꾼다. 별도 메시지가 아니라 **`UpdateHeroAttrS2C`의
+  `HeroAttrEffect` 필드 33** `{1: 칸 번호, 2: 이전 종류, 3: 새 종류}`로 온다 (원인은
+  그 카드). `Room.Lands`는 판 시작 때 한 번 받는 표라 이걸 `LandMap.Set`으로 갱신하지
+  않으면 바뀐 칸을 밟을 때 옛 종류(예: `땅 "재앙"`)로 찍힌다. 필드 34는 `{1: 미상,
+  2: 건물 id}`. 이전 종류(필드 2)는 한 칸(41번)에서만 확인했다.
+- **`CauseOrigin.source` 24 = Building(건물).** 카드가 놓은 건물을 밟았을 때의 효과
+  (질주 버섯: 다음 주사위 +3칸 버프, 스타후르츠: 최대 체력 +1). `CauseOrigin.Id`는 칸
+  번호가 아니라 **건물 id(30001~30004)** 다. 건물에는 이름표가 없어서
+  `Card.Params`(필드 20, packed sint32)의 둘째 값이 건물 id인 카드의 이름을 빌린다
+  (`NameConfig`, kind `building`). 카드 옵션의 셋째 값은 바뀔 땅 종류다
+  (12 질주 / 2 체크 포인트 / 22 상점). 복숭아는 셋째 값이 없고 땅이 안 바뀐다.
 - 캐릭터별 스택(치유·스타라이트·표식 등, `HeroAttrEffect` 필드 15~32)은 게임이 고정 id
   버프로 화면에 띄운다(`BattleProperty.RegisterPropertyBuff`). 그래서 그 버프 이름을 쓴다.
 - `ThrowDiceS2C.movePoint`가 비어 올 때가 있다. 눈의 합으로 메운다.

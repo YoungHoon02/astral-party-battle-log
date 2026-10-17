@@ -186,12 +186,7 @@ internal sealed class BattleLogger
 
         if (!Op.Allowed.Contains(cmdId))
         {
-            if (_traceUnknown)
-            {
-                // 손패(1109)는 남에게 보이면 안 되는 정보라 본문을 남기지 않는다.
-                bool bodyKept = body.Length > 0 && cmdId is not (Op.Heartbeat or Op.PredictAction or Op.RoomHeroCardChange);
-                Diag($"skip cmd={cmdId,-5} len={body.Length}" + (bodyKept ? $" {Hex(body, 64)}" : ""));
-            }
+            if (_traceUnknown) Diag($"skip cmd={cmdId,-5} len={body.Length}");
             return;
         }
 
