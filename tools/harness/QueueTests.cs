@@ -406,8 +406,50 @@ static class QueueTests
         tracePinned &= string.Join(" ", shape) == "5004/-/1 5028/1/2 1040/2/3";
         Check(tracePinned, "QT25 frame 기록 줄은 도착 번호(seq)와 그룹(grp)을 붙이고 즉시 처리는 seq=-로 쓴다", string.Join(" ", shape));
 
+        Start();
+        Empties(6);
+        QueueTracker.BeginRead();
+        long rn = A(1040, 1);
+        Tick();
+        QueueTracker.Apply(E);
+        Tick();
+        QueueTracker.Apply(E);
+        bool rdA = QueueTracker.Snapshot().DoneThrough == 0;
+        QueueTracker.EndRead();
+        Empties(2);
+        bool rdB = QueueTracker.Snapshot().DoneThrough == 0;
+        Empties(1);
+        bool rdC = QueueTracker.Snapshot().DoneThrough == 1;
+        Check(rn == 1 && rdA && rdB && rdC, "QT26 한 번의 읽기를 다 넘기기 전에 빈 목록 틱이 지나도 도착은 읽기가 끝난 뒤부터 센다", $"{rn}/{rdA}/{rdB}/{rdC}");
+
+        Start();
+        long nowUs = 1_000_000;
+        QueueTracker.ClockUs = () => nowUs;
+        const long tickUs = 4_167;
+        void Step() { nowUs += tickUs; Tick(); QueueTracker.Apply(E); }
+        for (int i = 0; i < 6; i++) Step();
+        A(1040, 1);
+        for (int i = 0; i < 3; i++) Step();
+        bool wcA = QueueTracker.Snapshot().DoneThrough == 0;
+        while (nowUs - 1_000_000 - 6 * tickUs < QueueTracker.ArrivalMarginUs - tickUs) Step();
+        bool wcB = QueueTracker.Snapshot().DoneThrough == 0;
+        Step();
+        bool wcC = QueueTracker.Snapshot().DoneThrough == 1;
+        Check(wcA && wcB && wcC, "QT27 빈 목록 규칙은 3틱 뒤에도 확정 뒤 100ms가 지나야 풀어 준다", $"{wcA}/{wcB}/{wcC}");
+
+        Start();
+        QueueTracker.BeginRead();
+        A(1040, 1);
+        QueueTracker.Configure(false);
+        QueueTracker.EndRead();
+        QueueTracker.Configure(true);
+        Empties(10);
+        bool dd = QueueTracker.Snapshot().DoneThrough == 0;
+        QueueTracker.Apply(H(1040, 1));
+        Check(dd && QueueTracker.Health.Unmatched == 1, "QT28 읽는 중에 꺼지면 읽기를 끝내도 대기열에 남는 것이 없다", $"{dd}/{QueueTracker.Health.Unmatched}");
+
         QueueTracker.ResetForTest();
-        Console.WriteLine(_fail == 0 ? "=== 대기열 추적 전부 통과 ===" : $"=== 대기열 추적 실패 {_fail}건 ===");
+        Console.WriteLine(_fail == 0 ? "=== 대기열 추적 전부 통과 ===": $"=== 대기열 추적 실패 {_fail}건 ===");
         return _fail;
     }
 }

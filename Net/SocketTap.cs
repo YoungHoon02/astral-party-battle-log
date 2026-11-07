@@ -100,11 +100,17 @@ internal static class SocketTap
         lock (Gate)
         {
             stream.Append(managed, 0, received);
-            while (stream.TryDequeue(out FrameHeader header, out byte[] body))
+            // 게임은 이 Postfix가 돌아온 뒤에야 바이트를 받으므로, 도착은 읽은 프레임을 모두 처리한 시점에 확정한다.
+            QueueTracker.BeginRead();
+            try
             {
-                try { OnFrame?.Invoke(header, body); }
-                catch { }
+                while (stream.TryDequeue(out FrameHeader header, out byte[] body))
+                {
+                    try { OnFrame?.Invoke(header, body); }
+                    catch { }
+                }
             }
+            finally { QueueTracker.EndRead(); }
         }
     }
 }

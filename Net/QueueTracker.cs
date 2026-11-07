@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using AstralPartyBattleLog.Log;
 
@@ -66,6 +67,7 @@ internal static class QueueTracker
 {
     public const int EmptyTicksToResume = 6;
     public const int ArrivalMarginTicks = 3;
+    public const long ArrivalMarginUs = 100_000;
     public const int MaxPending = 4096;
     private const int MaxGroups = 8192;
 
@@ -75,13 +77,15 @@ internal static class QueueTracker
         public readonly int Cmd;
         public readonly long Down;
         public readonly int Tick;
+        public readonly long AtUs;
 
-        public Arrival(long num, int cmd, long down, int tick)
+        public Arrival(long num, int cmd, long down, int tick, long atUs)
         {
             Num = num;
             Cmd = cmd;
             Down = down;
             Tick = tick;
+            AtUs = atUs;
         }
     }
 
@@ -97,6 +101,8 @@ internal static class QueueTracker
     private static long _nextNum;
     private static List<Arrival> _intake = new();
     private static List<Arrival> _swap = new();
+    private static readonly List<Arrival> Staging = new();
+    private static bool _reading;
     private static bool _awaitSync;
     private static bool _reconnectPending;
     private static long _reference;
@@ -126,6 +132,10 @@ internal static class QueueTracker
 
     private static readonly Dictionary<long, (long Arrival, int Cmd)> Groups = new();
     private static readonly Queue<long> GroupOrder = new();
+
+    internal static Func<long> ClockUs = MonotonicUs;
+
+    private static long MonotonicUs() => (long)(Stopwatch.GetTimestamp() * (1_000_000.0 / Stopwatch.Frequency));
 
     public static bool Enabled => Volatile.Read(ref _enabled);
 
@@ -160,6 +170,7 @@ internal static class QueueTracker
     private static bool TurnOff()
     {
         _intake.Clear();
+        Staging.Clear();
         _clearRequested = true;
         return Switch(QueueMode.Off);
     }
@@ -186,6 +197,7 @@ internal static class QueueTracker
     {
         if (!Enabled) return -1;
         int tick = Volatile.Read(ref _tick);
+        long nowUs = ClockUs();
         long num = -1;
         FreezeReason? why = null;
         bool changed = false;
@@ -194,7 +206,9 @@ internal static class QueueTracker
             if (!IsImmediate(cmd))
             {
                 num = ++_nextNum;
-                _intake.Add(new Arrival(num, cmd, down, tick));
+                var item = new Arrival(num, cmd, down, tick, nowUs);
+                if (_reading) Staging.Add(item);
+                else _intake.Add(item);
             }
             if (cmd == 5008)
             {
@@ -207,6 +221,31 @@ internal static class QueueTracker
         }
         if (changed) TraceState(QueueMode.Frozen, Token(why!.Value));
         return num;
+    }
+
+    // 게임은 훅이 돌아온 뒤에야 읽은 바이트를 받으므로, 도착은 한 번의 읽기를 모두 넘긴 시점에 확정한다.
+    public static void BeginRead()
+    {
+        lock (Gate)
+        {
+            Staging.Clear();
+            _reading = true;
+        }
+    }
+
+    public static void EndRead()
+    {
+        lock (Gate)
+        {
+            _reading = false;
+            if (_enabled && Staging.Count > 0)
+            {
+                int tick = Volatile.Read(ref _tick);
+                long nowUs = ClockUs();
+                foreach (var a in Staging) _intake.Add(new Arrival(a.Num, a.Cmd, a.Down, tick, nowUs));
+            }
+            Staging.Clear();
+        }
     }
 
     public static void SocketDropped()
@@ -485,8 +524,9 @@ internal static class QueueTracker
         _hasLastUnmatched = false;
         if (++_emptyRun < EmptyTicksToResume) return;
 
+        long nowUs = ClockUs();
         int n = 0;
-        while (n < Pending.Count && tick - Pending[n].Tick >= ArrivalMarginTicks) n++;
+        while (n < Pending.Count && tick - Pending[n].Tick >= ArrivalMarginTicks && nowUs - Pending[n].AtUs >= ArrivalMarginUs) n++;
         if (n > 0)
         {
             Finish(n);
@@ -568,6 +608,9 @@ internal static class QueueTracker
             _nextNum = 0;
             _intake.Clear();
             _swap.Clear();
+            Staging.Clear();
+            _reading = false;
+            ClockUs = () => (long)Volatile.Read(ref _tick) * 1_000_000;
             _awaitSync = false;
             _reconnectPending = false;
             _reference = 0;
