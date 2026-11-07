@@ -340,6 +340,7 @@ static class Sched
         }
         finally
         {
+            writer.Close();
             OverlaySchedule.FileClockUs = real;
             OverlaySchedule.FlushFile();
             OverlaySchedule.AttachFile(null);
