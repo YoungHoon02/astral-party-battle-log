@@ -93,6 +93,10 @@ internal sealed class BattleLogger
     private static readonly TimeSpan DownWindow = TimeSpan.FromSeconds(3);
 
     private bool _finishPending;
+    private long _finishGroup = -1;
+    private LineKind _finishKind;
+
+    private readonly List<string> _hpLines = new();
 
     private readonly HashSet<long> _msgTargets = new();
 
@@ -177,7 +181,8 @@ internal sealed class BattleLogger
         if (_finishPending && cmdId is not (Op.UpdateHeroAttr or Op.HeroSkillMoveEffect or Op.LandBuffs))
         {
             _finishPending = false;
-            Emit("──────── 게임 종료 ────────");
+            FlushGold();
+            EmitLine("──────── 게임 종료 ────────", _finishKind, _finishGroup);
         }
 
         if (header.UpSn != 0 && Op.TimingSync.Contains(cmdId)) MirrorSync?.Invoke(cmdId, body.Length);
@@ -253,6 +258,8 @@ internal sealed class BattleLogger
             case Op.GameFinish:
                 Diag("[game] GameFinish(1016)");
                 _finishPending = true;
+                _finishGroup = _group;
+                _finishKind = _kind;
                 break;
             case Op.UpdateHeroAttr:
                 if (HasUnknownTarget(body))
@@ -790,6 +797,7 @@ internal sealed class BattleLogger
         _causeSkillLine = null;
         _downFold.Clear();
         _msgTargets.Clear();
+        _hpLines.Clear();
 
         while (r.NextField(out int field, out int wire))
         {
@@ -813,10 +821,11 @@ internal sealed class BattleLogger
             }
         }
 
+        long pkGroup = -1;
         if (_kindFromCause)
         {
             _kind = KindOfCause(causeSource);
-            if (causeSource == BattleCause && _battleGroup >= 0) _group = _battleGroup;
+            if (causeSource == BattleCause) pkGroup = _battleGroup;
         }
 
         if (lines.Count == 0 && _causeSkillLine is null) return;
@@ -864,12 +873,24 @@ internal sealed class BattleLogger
             return;
         }
 
+        bool isHp(string l) => _hpLines.Exists(h => ReferenceEquals(h, l));
+        long headGroup = pkGroup >= 0 && lines.Exists(isHp) ? pkGroup : _group;
+
         if (!alreadySaid)
         {
-            Emit(header);
+            EmitIn(header, headGroup);
             Said(causeSource, causeId, who);
         }
-        foreach (var line in lines) Emit("        " + line);
+        foreach (var line in lines)
+            if (isHp(line)) EmitIn("        " + line, headGroup);
+        foreach (var line in lines)
+            if (!isHp(line)) EmitIn("        " + line, _group);
+    }
+
+    private void EmitIn(string line, long group)
+    {
+        FlushGold();
+        EmitLine(line, _kind, group, _units);
     }
 
     // 네 조건 중 하나라도 빼면 무관한 두 사람의 수입/지출로 없는 송금을 만들어낸다.
@@ -1086,7 +1107,11 @@ internal sealed class BattleLogger
                 switch (field)
                 {
                     case 2: Add(lines, DecodeGold(sub, target)); break;
-                    case 3: Add(lines, DecodeHp(sub, target, causeSource)); break;
+                    case 3:
+                        string hp = DecodeHp(sub, target, causeSource);
+                        if (hp.Length > 0) _hpLines.Add(hp);
+                        Add(lines, hp);
+                        break;
                     case 4: Add(lines, DecodeStat(sub, target, 5, attack: true)); break;
                     case 5: Add(lines, DecodeStat(sub, target, 5, attack: false)); break;
                     case 6: DecodeBuff(sub, target, causeSource, causeId, lines); break;
@@ -1597,6 +1622,7 @@ internal sealed class BattleLogger
         _downAt.Clear();
         _downFold.Clear();
         _finishPending = false;
+        _finishGroup = -1;
         _msgTargets.Clear();
         _saidCardName = null;
         if (_deferred.Count > 0)

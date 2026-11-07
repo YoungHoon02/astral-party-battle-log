@@ -431,6 +431,67 @@ static class Sched
         Expect("L2 반격 표시로 같은 창의 다음 타격에 공개", "Attack");
     }
 
+    static byte[] PkEffect(long target, bool hp, bool gold)
+    {
+        var parts = new List<byte[]> { Frame.Fix64(1, target) };
+        if (gold) parts.Add(Frame.Msg(2, Frame.Cat(Frame.Fix64(1, target), Frame.Fix32(2, 5), Frame.Fix32(3, 10), Frame.Fix32(4, 15))));
+        if (hp) parts.Add(Frame.Msg(3, Frame.Cat(Frame.Fix64(1, target), Frame.Fix32(2, -3), Frame.Fix32(3, 10),
+                                                 Frame.Fix32(4, 7), Frame.Fix32(5, -3), Frame.Fix32(6, 7), Frame.Fix32(7, 10))));
+        return Frame.Msg(4, Frame.Cat(parts.ToArray()));
+    }
+
+    static byte[] PkCause() => Frame.Msg(2, Frame.Cat(Frame.Varint(1, 12), Frame.Fix64(3, 1)));
+
+    static byte[] PkBattle() => Frame.Msg(1, Frame.Cat(
+        Frame.Fix64(1, 1), Frame.Msg(2, Frame.Fix64(1, 100)), Frame.Msg(3, Frame.Fix64(1, 200)), Frame.Varint(5, 1)));
+
+    // PK 원인 1040: 머리줄·체력 줄은 PK 그룹, 나머지는 자기 그룹. 효과 순서와 무관해야 한다.
+    static void RunPkSplit(ManualLogSource log)
+    {
+        var names = NameTable.Load(Path.Combine(Path.GetTempPath(), "apbl-harness-no-names.tsv"), _ => { });
+        var got = new List<(long Group, string Text)>();
+        var lg = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
+        lg.Mirror = (s, k, g, u, d) => got.Add((g, Palette.Strip(s).Trim()));
+
+        void Hit(byte[] first, byte[] second) =>
+            lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 100), PkCause(), first, second));
+
+        lg.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), PkBattle());
+        long pk = got[0].Group;
+        got.Clear();
+
+        Hit(PkEffect(200, hp: false, gold: true), PkEffect(200, hp: true, gold: false));
+        string seq = string.Join("|", got.ConvertAll(x => (x.Group == pk ? "pk" : "own") + (x.Text.Contains("HP") ? ":hp" : x.Text.Contains("골드") ? ":gold" : ":head")));
+        bool ok = seq == "pk:hp|own:gold" && got[1].Group == pk + 1;
+        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK1 골드→체력 순서로 와도 체력은 PK 그룹으로 먼저, 골드는 자기 그룹으로 뒤에: {seq}");
+        if (!ok) _fail++;
+
+        got.Clear();
+        Hit(PkEffect(200, hp: true, gold: false), PkEffect(200, hp: false, gold: true));
+        seq = string.Join("|", got.ConvertAll(x => (x.Group == pk ? "pk" : "own") + (x.Text.Contains("HP") ? ":hp" : x.Text.Contains("골드") ? ":gold" : ":head")));
+        ok = seq == "pk:hp|own:gold";
+        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK2 체력→골드 순서도 같다: {seq}");
+        if (!ok) _fail++;
+
+        got.Clear();
+        lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0),
+                   Frame.Cat(Frame.Fix64(1, 100), PkCause(), PkEffect(200, hp: false, gold: true), PkEffect(100, hp: false, gold: true)));
+        ok = got.Count > 0 && got.TrueForAll(x => x.Group != pk && x.Group == got[0].Group);
+        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK3 체력 줄이 없으면 모두 자기 그룹");
+        if (!ok) _fail++;
+
+        got.Clear();
+        lg.OnFrame(new FrameHeader(Op.GameFinish, 0, 0, 0), Array.Empty<byte>());
+        lg.OnFrame(new FrameHeader(5004, 0, 0, 0), Array.Empty<byte>());
+        ok = got.Count == 1 && got[0].Text.Contains("게임 종료") && got[0].Group == pk + 4;
+        got.Clear();
+        lg.OnFrame(new FrameHeader(Op.GameFinish, 0, 0, 0), Array.Empty<byte>());
+        lg.OnFrame(new FrameHeader(5004, 0, 0, 0), Array.Empty<byte>());
+        ok &= got.Count == 1 && got[0].Group == pk + 6;
+        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK4 게임 종료 구분선은 1016 프레임의 그룹으로 나간다 (하트비트 프레임 그룹이 아니다)");
+        if (!ok) _fail++;
+    }
+
     // docs/SIGNAL-GATING.md 6절 검증 계획
     static void RunScreenSignals(ManualLogSource log)
     {
@@ -1132,6 +1193,7 @@ static class Sched
         Expect("TB6 다음 배너가 뒤 차례 줄을 푼다", "t");
 
         RunLoggerTags(log);
+        RunPkSplit(log);
 
         Setup(log, signals: false);
         OverlaySchedule.Line("d", Dice, 1, 3, 3);
