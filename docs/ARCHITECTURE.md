@@ -1046,6 +1046,15 @@ PK(battle)만 예외다 — 머리줄은 공격자 이름인데 효과는 방어
 `ActionOverTimeLogS2C`는 타임아웃 기록용이다). 확인함 — 그래서 "행동이 끝났다"를
 알려면 다음 턴 시작을 기다리는 수밖에 없었다.
 
+이름만 보면 턴 종료 신호 같은 것이 둘 있지만, 둘 다 아니다.
+
+- `IsActionEnd`(필드 5, bool)는 `UpdateHeroAttrS2C` → `HeroAttrEffect.ModifyNum`(22) →
+  `HeroModifyNumChangeS2C` 안에만 있다. 개조 스택(버프 10009)이 바뀐다는 메시지에 딸린
+  값이라, 개조 스택이 바뀌지 않는 차례에는 실릴 곳이 없다. 게임은 이 값이 참이고 남은
+  스택이 0일 때 개조 해제 연출을 띄우는 데만 쓴다(`BattleProperty.OnModifyNumChanged`).
+- `OnActionFinished`는 싱글 플레이 모드(`SinglePlayer.*`)와 튜토리얼(`Core.Tutorial`)의
+  클라이언트 안 상태 기계 메서드다. 네트워크로 오가지 않는다.
+
 ## 릴리스 알림
 
 새 릴리스 확인은 **게임 밖 프로그램** `AstralPartyBattleLogUpdater.exe`(`Updater/`)가 한다. 플러그인은
