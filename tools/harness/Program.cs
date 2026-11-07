@@ -602,6 +602,19 @@ class Program
         Console.WriteLine($"  {(hok ? "OK  " : "FAIL")} H1 cmd={fh.CmdId} err={fh.ErrId} up=0x{fh.UpSn:X} down=0x{fh.DownSn:X} len={fb.Length}");
         if (!hok) fails++;
 
+        var reasm = new FrameReassembler();
+        reasm.Append(fr, 0, 20);
+        bool fp0 = !reasm.TryDequeue(out _, out _) && !reasm.Produced;
+        reasm.Append(fr, 20, fr.Length - 20);
+        bool fp1 = reasm.TryDequeue(out _, out _) && reasm.Produced;
+        var httpStream = new FrameReassembler();
+        byte[] httpBytes = System.Text.Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        httpStream.Append(httpBytes, 0, httpBytes.Length);
+        bool fp2 = !httpStream.TryDequeue(out _, out _) && httpStream.Rejected && !httpStream.Produced;
+        bool fpok = fp0 && fp1 && fp2;
+        Console.WriteLine($"  {(fpok ? "OK  " : "FAIL")} H2 프레임을 낸 스트림만 게임 소켓으로 표시한다: {fp0}/{fp1}/{fp2}");
+        if (!fpok) fails++;
+
         Console.WriteLine();
         Console.WriteLine("=== 빠른 대화 / 마커 ===");
         string chatPath = Path.Combine(dir, "names-chat.tsv");

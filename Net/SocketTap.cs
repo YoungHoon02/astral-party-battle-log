@@ -48,17 +48,24 @@ internal static class SocketTap
     // IL2CPP가 dispose된 소켓 주소를 재사용하므로, 남겨두면 재접속이 반쪽 프레임을 물려받는다.
     internal static void DropSocket(IntPtr socket)
     {
+        bool game;
         lock (Gate)
         {
             Outstanding.Remove(socket);
-            Streams.Remove(socket);
+            game = RemoveStream(socket);
         }
+        if (game) QueueTracker.SocketDropped();
     }
+
+    // 게임 프레임을 낸 소켓이 끊기면 게임은 재연결 동기화 전까지 화면 없이 메시지를 흘려보낸다(docs/QUEUE-SYNC.md "추적 상태").
+    private static bool RemoveStream(IntPtr socket) =>
+        Streams.Remove(socket, out FrameReassembler? gone) && gone.Produced;
 
     internal static void NoteEndReceive(IntPtr socket, int received)
     {
         Pending pending;
-        FrameReassembler stream;
+        FrameReassembler? stream = null;
+        bool game = false;
 
         lock (Gate)
         {
@@ -66,17 +73,18 @@ internal static class SocketTap
             Outstanding.Remove(socket);
 
             // 0바이트(FIN)는 예외가 없어 Finalizer를 타지 않으므로 여기서 버린다.
-            if (received <= 0)
-            {
-                Streams.Remove(socket);
-                return;
-            }
-
-            if (!Streams.TryGetValue(socket, out stream!))
+            if (received <= 0) game = RemoveStream(socket);
+            else if (!Streams.TryGetValue(socket, out stream))
             {
                 stream = new FrameReassembler();
                 Streams[socket] = stream;
             }
+        }
+
+        if (stream is null)
+        {
+            if (game) QueueTracker.SocketDropped();
+            return;
         }
 
         if (stream.Rejected) return;

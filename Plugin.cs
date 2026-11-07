@@ -137,6 +137,14 @@ public class Plugin : BasePlugin
             "Overlay", "SyncMaxLagMs", 60000,
             "화면 재생 덩어리가 수신보다 뒤처져 시작할 수 있는 최대 시간(밀리초). " +
             "실측 최대 지연은 약 37초였다.");
+        ConfigEntry<bool> queueSync = Config.Bind(
+            "Overlay", "QueueSync", true,
+            "게임이 메시지를 처리하는 순서(대기열)를 읽어, 줄을 게임이 그 장면을 처리하기 시작한 뒤에 보여 준다. " +
+            "결과(체력·골드·버프) 줄은 처리가 끝난 뒤에 보여 준다. 대기열을 못 읽으면 연출 길이 추정으로 돌아간다. " +
+            "SyncWithAnimation이 켜져 있어야 공개 시점에 쓰인다.");
+        // 소켓 후킹이 걸리기 전에 켜야 첫 프레임부터 도착 번호가 매겨진다.
+        QueueReader.Init(Log);
+        QueueTracker.Configure(queueSync.Value);
         ConfigEntry<bool> traceTiming = Config.Bind(
             "Diagnostics", "TraceTiming", false,
             "화면 지연을 재기 위한 기록(수신 프레임 헤더, PK 진행, 표시 시각)을 BepInEx 로그에 남긴다. " +
@@ -189,6 +197,7 @@ public class Plugin : BasePlugin
         else
         {
             SocketTap.OnFrame = null;
+            QueueReader.Disable("socket hook");
             Log.LogError("Socket patching failed - no battle logging will happen.");
         }
 
@@ -196,6 +205,8 @@ public class Plugin : BasePlugin
         if (!TryPatch("frame", h => h.PatchAll(typeof(FramePump))))
         {
             DetachOverlay(logger);
+            // 펌프가 없으면 도착 기록이 비워지지 않고 쌓이기만 한다.
+            QueueReader.Disable("frame hook");
             Log.LogError("Frame hook failed - overlay and name table rebuild are disabled; the log file is written on receipt.");
         }
         else if (OverlaySchedule.UsesScreenSignals || screenProbe.Value)

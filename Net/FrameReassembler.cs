@@ -14,6 +14,8 @@ internal sealed class FrameReassembler
     // HTTP 등 게임 프로토콜이 아닌 소켓도 같은 타입을 쓴다. 판명되면 이후 입력을 전부 버린다.
     public bool Rejected { get; private set; }
 
+    public bool Produced { get; private set; }
+
     public void Append(byte[] src, int offset, int count)
     {
         if (Rejected || count <= 0) return;
@@ -53,6 +55,7 @@ internal sealed class FrameReassembler
 
         _len -= total;
         if (_len > 0) Buffer.BlockCopy(_buf, total, _buf, 0, _len);
+        Produced = true;
         return true;
     }
 

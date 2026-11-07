@@ -152,10 +152,8 @@ internal sealed class BattleLogger
     {
         int cmdId = header.CmdId;
         int errId = header.ErrId;
-
-        if (TimingTrace.Enabled)
-            TimingTrace.Write($"frame cmd={cmdId} {Op.Name(cmdId)} up={header.UpSn} "
-                              + $"down={header.DownSn} err={errId} len={body.Length}");
+        // 허용목록 밖(걷기 등)이나 일찍 돌아가는 프레임도 게임 대기열에는 들어가므로, 어떤 분기보다 먼저 도착을 센다.
+        long arrival = QueueTracker.Arrive(cmdId, header.DownSn, errId);
 
         if (_goldHold is { } waiting && DateTime.UtcNow - waiting.At > GoldPairWindow) FlushGold();
 
@@ -164,6 +162,13 @@ internal sealed class BattleLogger
         if (!updatesRoster) DrainDeferred();
 
         _group = ++_groupSeq;
+        QueueTracker.NoteGroup(_group, arrival, cmdId);
+
+        if (TimingTrace.Enabled)
+            TimingTrace.Write($"frame cmd={cmdId} {Op.Name(cmdId)} up={header.UpSn} "
+                              + $"down={header.DownSn} err={errId} len={body.Length} "
+                              + $"seq={(arrival >= 0 ? arrival.ToString() : "-")} grp={_group}");
+
         _kind = KindOf(cmdId);
         _units = 0;
         _detail = 0;

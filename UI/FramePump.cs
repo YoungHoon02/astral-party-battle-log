@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using AstralPartyBattleLog.Net;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -25,6 +26,7 @@ internal static class FramePump
         int frame = Time.frameCount;
         if (frame == _lastFrame) return;
         _lastFrame = frame;
+        QueueTracker.BeginFrame(frame);
 
         try
         {
@@ -42,8 +44,23 @@ internal static class FramePump
 
         Log.NameHarvest.Tick();
 
+        PumpQueue();
         PumpSchedule();
         LogOverlay.Pump();
+    }
+
+    // Postfix에서 나간 예외는 게임의 deltaTime 호출로 번진다. 끄는 길에서 난 예외도 삼킨다.
+    private static void PumpQueue()
+    {
+        try
+        {
+            if (QueueTracker.Enabled) QueueTracker.Apply(QueueReader.Read());
+        }
+        catch (Exception e)
+        {
+            try { QueueReader.Disable("exception: " + e.Message); }
+            catch { }
+        }
     }
 
     private static readonly Action<string> ShowLine = LogOverlay.Enqueue;

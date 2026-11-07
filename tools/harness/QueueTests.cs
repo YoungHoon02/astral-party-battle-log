@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using AstralPartyBattleLog.Log;
 using AstralPartyBattleLog.Net;
+using BepInEx.Logging;
 
 // 게임 처리 대기열 추적기 검증.
 static class QueueTests
@@ -349,6 +351,22 @@ static class QueueTests
         A(1040, 3);
         QueueTracker.Apply(H(1040, 3));
         Check(c1 && c2 && QueueTracker.Snapshot().Mode == QueueMode.Live, "QT23 소켓이 끊긴 채 껐다 켜도 5008과 그 뒤 항목 없이는 켜지지 않는다", $"{c1}/{c2}");
+
+        Start();
+        var logger = new BattleLogger(new ManualLogSource("queue"), null, false, new HashSet<int>(), false, true,
+                                      NameTable.Load("", _ => { }));
+        logger.OnFrame(new FrameHeader(Op.MatchSuccess, 0, 0, 21), Array.Empty<byte>());
+        logger.OnFrame(new FrameHeader(5028, 0, 0, 22), Array.Empty<byte>());
+        logger.OnFrame(new FrameHeader(5004, 0, 0, 23), Array.Empty<byte>());
+        logger.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 24), Array.Empty<byte>());
+        bool lq1 = QueueTracker.TryRefOf(1, out long lr1, out int lc1) && lr1 == 1 && lc1 == Op.MatchSuccess;
+        bool lq2 = QueueTracker.TryRefOf(2, out long lr2, out int lc2) && lr2 == 2 && lc2 == 5028;
+        bool lq3 = !QueueTracker.TryRefOf(3, out _, out _);
+        bool lq4 = QueueTracker.TryRefOf(4, out long lr4, out int lc4) && lr4 == 3 && lc4 == Op.UpdateHeroAttr;
+        QueueTracker.Apply(H(5028, 22));
+        var wsnap = QueueTracker.Snapshot();
+        Check(lq1 && lq2 && lq3 && lq4 && wsnap.Mode == QueueMode.Live && wsnap.StartedThrough == 2 && wsnap.DoneThrough == 1,
+              "QT24 로거는 본문 전에 돌아가는 프레임도 도착 번호를 받아 그룹에 남긴다", $"{lq1}/{lq2}/{lq3}/{lq4} {Show(wsnap)}");
 
         QueueTracker.ResetForTest();
         Console.WriteLine(_fail == 0 ? "=== 대기열 추적 전부 통과 ===" : $"=== 대기열 추적 실패 {_fail}건 ===");
