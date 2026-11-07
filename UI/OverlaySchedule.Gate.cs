@@ -278,11 +278,12 @@ internal static partial class OverlaySchedule
             head.Scheduled = true;
             Decide(Act.Schedule, head.Item, Why.Model, due: head.DueUs, floor: head.FloorUs);
         }
-        bool reached = Started(head.Item.Ref) && (!head.Item.Result || EndedOf(head.Item));
+        bool needsEnd = head.Item.Result;
+        bool reached = QueueReached(head.Item, needsEnd);
         if (!reached && Queue.Count <= MaxWaiting) return false;
         Queue.RemoveAt(0);
         Release(new Scheduled(head.Item, head.DueUs, head.FloorUs, head.Seq), now, line, page, clear,
-                !reached ? Why.Budget : head.Item.Result ? Why.QueueEnd : Why.QueueStart);
+                QueueWhy(reached, needsEnd));
         if (reached) Anchor(now, seen: true);
         return true;
     }
@@ -387,8 +388,7 @@ internal static partial class OverlaySchedule
                 _ => GapKind.Budget,
             }, head.Gate.ToString().ToLowerInvariant(), head.Item.ReceivedUs, now);
         GateTrace($"release kind={head.Gate.ToString().ToLowerInvariant()} by={head.Res.ToString().ToLowerInvariant()} "
-                  + $"waited={(now - head.Item.ReceivedUs) / 1000}ms grp={head.Item.Group} "
-                  + $"ref={(head.Item.Ref >= 0 ? head.Item.Ref.ToString() : "-")} why={WhyNames[(int)head.Why]}");
+                  + $"waited={(now - head.Item.ReceivedUs) / 1000}ms {TraceTail(head.Item, head.Why)}");
 
         // PK 피해 줄은 PK 결과와 같은 그룹이라 함께 공개한다.
         while (Queue.Count > 0 && Queue[0].Gate == Gate.None && Queue[0].Item.Group >= 0
@@ -527,8 +527,7 @@ internal static partial class OverlaySchedule
                 break;
             }
         }
-        Ledger? owed = _queueActive ? null
-            : Unconsumed.Find(l => l.Gate == Gate.Dice && l.Pips.Contains(pip) && l.ReceivedUs < atUs);
+        Ledger? owed = Owed.Find(l => l.Gate == Gate.Dice && l.Pips.Contains(pip) && l.ReceivedUs < atUs);
 
         if (owed is not null && (pending is null || owed.Seq < pending.Seq))
         {
@@ -673,10 +672,9 @@ internal static partial class OverlaySchedule
             if (fit == Fit.Take && e.Item.ReceivedUs < beforeUs) pending = e;
             break;
         }
-        if (_queueActive) return (pending, null);
 
         Ledger? owed = null;
-        foreach (Ledger l in Unconsumed)
+        foreach (Ledger l in Owed)
             if (l.Gate == Gate.Pk && l.Seq > afterSeq && l.ReceivedUs < beforeUs && !(originalOnly && l.Counter)
                 && (owed is null || l.Seq < owed.Seq))
                 owed = l;
@@ -714,11 +712,10 @@ internal static partial class OverlaySchedule
         }
         // 눈을 모르는 주사위는 올 신호가 없어 장부에 올릴 것도 없다. 라운드 팁은 뒤에 받은 페이지와만 짝지어져
         // 늦게 와도 다른 줄을 먼저 풀지 않는다. 차례 줄이 늦은 경로로 풀렸다면 그 배너는 이미 놓친 것이라,
-        // 장부에 올리면 뒤 차례 줄이 모두 배너 하나씩 밀린다. 대기열 규칙 적용 중에는 처리 중인 줄의 신호만
-        // 받으므로 늦게 온 신호를 소비할 장부가 필요 없다.
-        if (e.Gate == Gate.Dice && e.Pips.Count == 0 || e.Gate is Gate.Round or Gate.Turn || _queueActive) return;
+        // 장부에 올리면 뒤 차례 줄이 모두 배너 하나씩 밀린다.
+        if (e.Gate == Gate.Dice && e.Pips.Count == 0 || e.Gate is Gate.Round or Gate.Turn) return;
         // 자기 신호 없이 공개한 줄은 모두 장부에 올린다. 그 신호가 늦게 오면 다음 줄 대신 여기서 소비된다.
-        Unconsumed.Add(new Ledger
+        Owe(new Ledger
         {
             Gate = e.Gate, Pips = new List<int>(e.Pips), Counter = e.Counter, Seq = e.Seq,
             ReceivedUs = e.Item.ReceivedUs, ItemId = e.Item.Id,

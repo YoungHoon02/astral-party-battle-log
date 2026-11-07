@@ -53,7 +53,6 @@ internal static partial class OverlaySchedule
         "model", "sync", "own-signal", "later-signal", "window-close", "cap", "budget", "group-follow",
         "counter-sync", "fallback", "stale", "reset", "discard", "queue-start", "queue-end",
     };
-    private static readonly string[] QueueModeNames = { "off", "live", "frozen" };
     private static readonly string[] EnvNames = { "hook-success", "hookfail", "hook-disabled", "fallback", "forget-banner" };
     private static readonly string[] DiagNames =
     {
@@ -417,7 +416,7 @@ internal static partial class OverlaySchedule
                 Num(sb, "flags", r.C);
                 break;
             case Rec.Queue:
-                Str(sb, "mode", QueueModeNames[r.A]);
+                Str(sb, "mode", QueueTracker.ModeNames[r.A]);
                 Num(sb, "startedThrough", r.B);
                 Num(sb, "doneThrough", r.C);
                 break;

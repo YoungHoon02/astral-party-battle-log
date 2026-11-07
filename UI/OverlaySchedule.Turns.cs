@@ -30,13 +30,11 @@ internal static partial class OverlaySchedule
     }
 
     // 학습 전 차례 줄은 추정으로 내지만 장부에 올린다. 화면이 밀려 있으면 그 배너가 학습 뒤에 떠서,
-    // 장부가 없으면 뒤 차례 줄에 짝지어져 사이의 결과를 먼저 푼다. 대기열 규칙 적용 중에는 배너를 처리 중인
-    // 차례 줄에만 짝지으므로 장부가 필요 없다.
+    // 장부가 없으면 뒤 차례 줄에 짝지어져 사이의 결과를 먼저 푼다.
     private static Gate TurnGate(Item item, long seq)
     {
         if (_banner != IntPtr.Zero) return Gate.Turn;
-        if (!_queueActive)
-            Unconsumed.Add(new Ledger { Gate = Gate.Turn, Seq = seq, ReceivedUs = item.ReceivedUs, ItemId = item.Id });
+        Owe(new Ledger { Gate = Gate.Turn, Seq = seq, ReceivedUs = item.ReceivedUs, ItemId = item.Id });
         return Gate.None;
     }
 
@@ -116,7 +114,7 @@ internal static partial class OverlaySchedule
             if (fit == Fit.Take && e.Item.ReceivedUs < atUs) turn = e;
             break;
         }
-        Ledger? owed = _queueActive ? null : Unconsumed.Find(l => l.Gate == Gate.Turn && l.ReceivedUs < atUs);
+        Ledger? owed = Owed.Find(l => l.Gate == Gate.Turn && l.ReceivedUs < atUs);
         if (owed is not null && (turn is null || owed.Seq < turn.Seq))
         {
             Unconsumed.Remove(owed);

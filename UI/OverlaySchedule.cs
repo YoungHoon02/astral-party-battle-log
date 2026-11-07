@@ -211,15 +211,7 @@ internal static partial class OverlaySchedule
                              int detail = 0, long parent = Null)
     {
         _touched = true;
-        long reference = -1;
-        bool result = false, opener = false;
-        // 1라운드 페이지는 전투 씬 로드 전에 와서 하한을 걸지 않는다.
-        if (group >= 0 && !(signal == Signal.Page && round == 1) && QueueTracker.TryRefOf(group, out reference, out int cmd))
-        {
-            result = cmd is 1040 or 1013 or 1096 or 5044;
-            opener = cmd is 5022 or 1096 or 5044;
-        }
-        else reference = -1;
+        (long reference, bool result, bool opener) = RefFor(signal, group, round);
         var item = new Item(signal, kind, group, units, Volatile.Read(ref _nowUs),
                             Volatile.Read(ref _speed), Volatile.Read(ref _generation),
                             text, round, detail, _recording ? Interlocked.Increment(ref _itemIds) : 0,
@@ -294,10 +286,10 @@ internal static partial class OverlaySchedule
                 Item it = head.Item;
                 bool needsEnd = it.Result || it.Signal == Signal.Line && it.Kind is LineKind.Dice or LineKind.Attack
                                 || it.Group >= 0 && it.Group == endGroup;
-                bool reached = Started(it.Ref) && (!needsEnd || EndedOf(it));
+                bool reached = QueueReached(it, needsEnd);
                 if (!reached && Waiting.Count <= MaxWaiting) break;
                 Waiting.Dequeue();
-                Release(head, now, line, page, clear, !reached ? Why.Budget : needsEnd ? Why.QueueEnd : Why.QueueStart);
+                Release(head, now, line, page, clear, QueueWhy(reached, needsEnd));
                 if (reached) Anchor(now, seen: true);
                 if (needsEnd) endGroup = it.Group;
                 continue;
@@ -476,8 +468,11 @@ internal static partial class OverlaySchedule
         TimingTrace.Write($"show kind={item.Kind.ToString().ToLowerInvariant()} "
                           + $"planned={(s.DueUs - item.ReceivedUs) / 1000}ms "
                           + $"waited={(now - item.ReceivedUs) / 1000}ms speed={item.Speed:0.##} "
-                          + $"grp={item.Group} ref={(item.Ref >= 0 ? item.Ref.ToString() : "-")} why={WhyNames[(int)why]}");
+                          + TraceTail(item, why));
     }
+
+    private static string TraceTail(in Item item, Why why) =>
+        $"grp={item.Group} ref={QueueTracker.ArrivalText(item.Ref)} why={WhyNames[(int)why]}";
 
     // F10 표식. 화면 정확도의 독립 증거가 아니라 참고 표시다(docs/TIMING-REPLAY-HANDOFF.md 3절 6).
     public static void Mark()

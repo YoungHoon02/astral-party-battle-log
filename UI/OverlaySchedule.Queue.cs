@@ -9,8 +9,8 @@ internal static partial class OverlaySchedule
 {
     // 추적이 이보다 오래 멈추면 멈춘 경계를 버리고 지금 방식(모델·화면 신호·상한)으로 돌아간다.
     private const long QueueFreezeUs = 60_000_000;
-    // 끝 경계보다 이만큼 앞의 메시지를 기다리는 줄은 없다(대기 줄 상한과 같은 수).
-    private const int MaxLinks = 4096;
+    // 끝 경계보다 이만큼 앞의 메시지를 기다리는 줄은 없다.
+    private const int MaxLinks = MaxWaiting;
 
     private enum Fit : byte { Take, Skip, Stop }
 
@@ -84,6 +84,29 @@ internal static partial class OverlaySchedule
         !opener ? r : Links.TryGetValue(r, out long end) ? end : long.MaxValue;
 
     private static bool EndedOf(in Item item) => Ended(EndOf(item.Ref, item.Opener));
+
+    // 1라운드 페이지는 전투 씬 로드 전에 와서 하한을 걸지 않는다.
+    private static (long Ref, bool Result, bool Opener) RefFor(Signal signal, long group, int round)
+    {
+        if (group < 0 || signal == Signal.Page && round == 1 || !QueueTracker.TryRefOf(group, out long reference, out int cmd))
+            return (-1, false, false);
+        return (reference, QueueTracker.IsResult(cmd), QueueTracker.IsOpener(cmd));
+    }
+
+    private static bool QueueReached(in Item item, bool needsEnd) => Started(item.Ref) && (!needsEnd || EndedOf(item));
+
+    private static Why QueueWhy(bool reached, bool needsEnd) =>
+        !reached ? Why.Budget : needsEnd ? Why.QueueEnd : Why.QueueStart;
+
+    private static readonly List<Ledger> NoLedger = new();
+
+    // 대기열 규칙 적용 중에는 처리 중인 줄의 신호만 받으므로 늦게 온 신호를 소비할 장부를 읽지도 올리지도 않는다.
+    private static List<Ledger> Owed => _queueActive ? NoLedger : Unconsumed;
+
+    private static void Owe(Ledger entry)
+    {
+        if (!_queueActive) Unconsumed.Add(entry);
+    }
 
     // 신호 짝짓기 후보(규칙 2). 이번 펌프가 처리하는 신호는 모두 지난 펌프 뒤에 보였으므로, 처리 구간은 지난 펌프의
     // 경계로 판단한다. 이번 펌프의 경계를 쓰면 같은 프레임에서 신호 뒤에 시작한 메시지(약한 창이 닫히자마자

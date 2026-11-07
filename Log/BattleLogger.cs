@@ -171,7 +171,7 @@ internal sealed class BattleLogger
         if (TimingTrace.Enabled)
             TimingTrace.Write($"frame cmd={cmdId} {Op.Name(cmdId)} up={header.UpSn} "
                               + $"down={header.DownSn} err={errId} len={body.Length} "
-                              + $"seq={(arrival >= 0 ? arrival.ToString() : "-")} grp={_group}");
+                              + $"seq={QueueTracker.ArrivalText(arrival)} grp={_group}");
 
         _kind = KindOf(cmdId);
         _units = 0;

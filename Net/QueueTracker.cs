@@ -175,23 +175,17 @@ internal static class QueueTracker
         return Switch(QueueMode.Off);
     }
 
-    private static bool IsImmediate(int cmd) => cmd switch
-    {
-        5004 or 5096 or 5238 or 5008 or 5150 or 5246 or 5328 or 1001 or 5012 => true,
-        _ => false,
-    };
+    private static bool IsImmediate(int cmd) => cmd is 5004 or 5096 or 5238 or 5008 or 5150 or 5246 or 5328 or 1001 or 5012;
 
-    private static bool IsBoundary(int cmd) => cmd switch
-    {
-        5022 or 1026 or 1007 or 1117 or 1015 or 1016 => true,
-        _ => false,
-    };
+    private static bool IsBoundary(int cmd) => cmd is 5022 or 1026 or 1007 or 1117 or 1015 or 1016;
 
-    private static bool IsOpener(int cmd) => cmd switch
-    {
-        5022 or 1096 or 5044 => true,
-        _ => false,
-    };
+    internal static bool IsOpener(int cmd) => cmd is 5022 or 1096 or 5044;
+
+    internal static bool IsResult(int cmd) => cmd is 1040 or 1013 or 1096 or 5044;
+
+    internal static readonly string[] ModeNames = { "off", "live", "frozen" };
+
+    internal static string ArrivalText(long arrival) => arrival >= 0 ? arrival.ToString() : "-";
 
     public static long Arrive(int cmd, long down, int err)
     {
@@ -303,9 +297,8 @@ internal static class QueueTracker
     private static void TraceState(QueueMode mode, string why, string? detail = null)
     {
         if (!TimingTrace.Enabled) return;
-        string name = mode switch { QueueMode.Live => "live", QueueMode.Frozen => "frozen", _ => "off" };
         string extra = detail is null ? "" : " detail=" + detail.Replace(' ', '_');
-        TimingTrace.Write($"queue state={name} why={why}{extra} f={Volatile.Read(ref _frame)}");
+        TimingTrace.Write($"queue state={ModeNames[(int)mode]} why={why}{extra} f={Volatile.Read(ref _frame)}");
     }
 
     public static void NoteGroup(long group, long arrival, int cmd)

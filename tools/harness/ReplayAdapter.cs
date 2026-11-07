@@ -19,7 +19,7 @@ internal static partial class OverlaySchedule
         long Id, long AtUs, int Gen, string Kind, int Pip, bool On, long InstanceId);
 
     internal static QueueSnapshot QueueIn(string mode, long startedThrough, long doneThrough) =>
-        new((QueueMode)Array.IndexOf(QueueModeNames, mode), startedThrough, doneThrough);
+        new((QueueMode)Array.IndexOf(QueueTracker.ModeNames, mode), startedThrough, doneThrough);
 
     internal static class ReplayPort
     {
