@@ -183,6 +183,7 @@ internal sealed class BattleLogger
             _finishPending = false;
             FlushGold();
             EmitLine("──────── 게임 종료 ────────", _finishKind, _finishGroup);
+            _finishGroup = -1;
         }
 
         if (header.UpSn != 0 && Op.TimingSync.Contains(cmdId)) MirrorSync?.Invoke(cmdId, body.Length);
@@ -874,15 +875,22 @@ internal sealed class BattleLogger
         }
 
         bool isHp(string l) => _hpLines.Exists(h => ReferenceEquals(h, l));
-        long headGroup = pkGroup >= 0 && lines.Exists(isHp) ? pkGroup : _group;
+        // PK 화면은 타격 때 체력만 보여 준다. 골드·버프·처치·레벨은 PK 연출 뒤 1040 처리기가 보여 주므로 PK 그룹에 묶지 않는다.
+        bool split = pkGroup >= 0 && lines.Exists(isHp);
+        long headGroup = split ? pkGroup : _group;
 
         if (!alreadySaid)
         {
             EmitIn(header, headGroup);
             Said(causeSource, causeId, who);
         }
+        if (!split)
+        {
+            foreach (var line in lines) EmitIn("        " + line, _group);
+            return;
+        }
         foreach (var line in lines)
-            if (isHp(line)) EmitIn("        " + line, headGroup);
+            if (isHp(line)) EmitIn("        " + line, pkGroup);
         foreach (var line in lines)
             if (!isHp(line)) EmitIn("        " + line, _group);
     }

@@ -490,6 +490,26 @@ static class Sched
         ok &= got.Count == 1 && got[0].Group == pk + 6;
         Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK4 게임 종료 구분선은 1016 프레임의 그룹으로 나간다 (하트비트 프레임 그룹이 아니다)");
         if (!ok) _fail++;
+
+        got.Clear();
+        byte[] cardCause = Frame.Msg(2, Frame.Cat(Frame.Varint(1, 7), Frame.Fix64(3, 0)));
+        lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 100), cardCause,
+                   PkEffect(100, hp: true, gold: true), PkEffect(200, hp: true, gold: true)));
+        seq = string.Join("|", got.ConvertAll(x => x.Text.Contains("HP") ? "hp" : x.Text.Contains("골드") ? "gold" : "head"));
+        ok = seq == "head|gold|hp|gold|hp" && got.TrueForAll(x => x.Group == got[0].Group);
+        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK5 PK가 아닌 원인은 대상별 원래 순서와 자기 그룹을 그대로 둔다: {seq}");
+        if (!ok) _fail++;
+
+        got.Clear();
+        lg.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), PkBattle());
+        long pk2 = got[0].Group;
+        got.Clear();
+        lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 100), PkCause(),
+                   PkEffect(100, hp: false, gold: true), PkEffect(200, hp: true, gold: false)));
+        seq = string.Join("|", got.ConvertAll(x => (x.Group == pk2 ? "pk" : "own") + ":" + (x.Text.Contains("HP") ? "hp" : x.Text.Contains("골드") ? "gold" : "head")));
+        ok = seq == "pk:hp|own:gold";
+        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK6 PK 원인 단독 1040에서도 체력만 PK 그룹: {seq}");
+        if (!ok) _fail++;
     }
 
     // 기록 켜기/끄기와 무관하게 이 시험이 낸 레코드를 읽기 위해, 있던 sink 앞에 끼워 넣는다.
@@ -605,6 +625,44 @@ static class Sched
                 var late = lines.FindLast(l => l.Text.Contains("HP"));
                 var r = late.Text is null ? null : RefOf(late.Id);
                 Verdict(held && r is { Ref: 4, Flags: 1 }, $"QS-R3 대상 미상으로 보류된 1040은 나중에 나가도 기준 4, 결과 줄: held={held} {Show(r)}");
+            }
+
+            {
+                var (lg, lines) = Start();
+                Dice(lg);
+                lg.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), PkBattle());
+                lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, Char),
+                           Frame.Msg(2, Frame.Cat(Frame.Varint(1, 7), Frame.Fix64(3, 0))), PkEffect(Char, hp: true, gold: false)));
+                int before = lines.Count;
+                lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, Char), PkCause(),
+                           PkEffect(Char, hp: false, gold: true), PkEffect(Monster, hp: true, gold: false)));
+                var got = lines.GetRange(before, lines.Count - before);
+                var refs = got.ConvertAll(l => RefOf(l.Id));
+                Verdict(got.Count == 3 && !got[0].Text.Contains("HP") && !got[0].Text.Contains("골드") && got[1].Text.Contains("HP")
+                        && got[2].Text.Contains("골드")
+                        && refs[0] is { Ref: 2, Flags: 0 } && refs[1] is { Ref: 2, Flags: 0 } && refs[2] is { Ref: 4, Flags: 1 },
+                        "QS-R8 머리줄이 아직 안 나왔으면 머리줄·체력은 PK 기준(2), 골드는 자기 기준(4): "
+                        + string.Join(" ", refs.ConvertAll(Show)));
+            }
+
+            {
+                var (lg, lines) = Start();
+                lg.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Frame.Msg(1, Frame.Cat(
+                    Frame.Fix64(1, 77),
+                    Frame.Msg(9, Frame.Cat(Frame.Fix64(1, Char), Frame.Varint(6, 0), Frame.Msg(10, Frame.Fix64(2, 1001)))),
+                    Frame.Msg(10, Frame.Cat(Frame.Fix64(1, Monster), Frame.Msg(10, Frame.Fix64(2, 5001)))))));
+                lg.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), PkBattle());
+                int before = lines.Count;
+                lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, Char), PkCause(),
+                           PkEffect(999, hp: true, gold: true)));
+                bool held = lines.Count == before;
+                for (int i = 0; i < BattleLogger.DeferFrames + 1; i++) Dice(lg);
+                var hp = lines.FindLast(l => l.Text.Contains("HP"));
+                var gold = lines.FindLast(l => l.Text.Contains("골드"));
+                var rh = hp.Text is null ? null : RefOf(hp.Id);
+                var rg = gold.Text is null ? null : RefOf(gold.Id);
+                Verdict(held && rh is { Ref: 2, Flags: 0 } && rg is { Ref: 3, Flags: 1 } && hp.Id < gold.Id,
+                        $"QS-R9 보류됐다 나가는 PK 원인 1040도 분리가 유지된다: held={held} hp[{Show(rh)}] gold[{Show(rg)}]");
             }
 
             {
