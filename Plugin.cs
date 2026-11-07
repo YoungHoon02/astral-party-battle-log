@@ -12,7 +12,7 @@ using HarmonyLib;
 
 namespace AstralPartyBattleLog;
 
-[BepInPlugin(Guid, "Astral Party Battle Log", "0.3.5")]
+[BepInPlugin(Guid, "Astral Party Battle Log", "0.4.0")]
 public class Plugin : BasePlugin
 {
     public const string Guid = "astralparty.battlelog";
@@ -130,9 +130,10 @@ public class Plugin : BasePlugin
         ConfigEntry<bool> syncAnimation = Config.Bind(
             "Overlay", "SyncWithAnimation", true,
             "오버레이 줄을 게임 화면이 그 장면에 도달할 때 보여준다. 게임은 연출을 차례대로 " +
-            "재생하므로 봇 차례가 이어지면 화면이 수십 초 뒤처진다. 주사위·PK 결과는 화면에 주사위 눈이나 " +
-            "PK 타격이 보이는 순간에 맞추고, 나머지 줄은 연출 길이로 추정한다. 화면 신호가 없는 몬스터 " +
-            "주사위는 다음 신호까지 늦게 뜰 수 있다. 끄면 받는 즉시 보여준다. 파일 로그는 영향이 없다.");
+            "재생하므로 봇 차례가 이어지면 화면이 수십 초 뒤처진다. QueueSync가 쓰일 때는 게임이 메시지를 " +
+            "처리하는 위치에 맞춘다. 아닐 때는 주사위·PK 결과를 화면에 주사위 눈이나 PK 타격이 보이는 순간에 " +
+            "맞추고, 나머지 줄은 연출 길이로 추정하며, 화면 신호가 없는 몬스터 주사위는 다음 신호까지 늦게 뜰 수 " +
+            "있다. 끄면 받는 즉시 보여준다. 파일 로그도 오버레이와 같은 시점에 기록된다.");
         ConfigEntry<int> syncMaxLagMs = Config.Bind(
             "Overlay", "SyncMaxLagMs", 60000,
             "화면 재생 덩어리가 수신보다 뒤처져 시작할 수 있는 최대 시간(밀리초). " +
@@ -140,8 +141,9 @@ public class Plugin : BasePlugin
         ConfigEntry<bool> queueSync = Config.Bind(
             "Overlay", "QueueSync", true,
             "게임이 메시지를 처리하는 순서(대기열)를 읽어, 줄을 게임이 그 장면을 처리하기 시작한 뒤에 보여 준다. " +
-            "결과(체력·골드·버프) 줄은 처리가 끝난 뒤에 보여 준다. 대기열을 못 읽으면 연출 길이 추정으로 돌아간다. " +
-            "SyncWithAnimation이 켜져 있어야 공개 시점에 쓰인다.");
+            "결과(체력·골드·버프) 줄은 처리가 끝난 뒤에 보여 준다. 게임 메모리는 읽기만 한다. 대기열을 못 읽거나 " +
+            "처리 위치를 놓친 지 60초가 지나면 이전 방식(화면 신호와 연출 길이 추정)으로 돌아가며, 이때는 줄이 " +
+            "화면보다 먼저 뜰 수 있다. SyncWithAnimation이 켜져 있어야 공개 시점에 쓰인다.");
         // 공개 시점에 쓸 곳이 없으면 게임 메모리를 읽지 않는다. 소켓 후킹이 걸리기 전에 켜야 첫 프레임부터 도착 번호가 매겨진다.
         QueueReader.Init(Log);
         QueueTracker.Configure(queueSync.Value && showOverlay.Value && syncAnimation.Value);
