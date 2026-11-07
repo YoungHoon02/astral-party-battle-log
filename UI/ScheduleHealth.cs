@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
+using AstralPartyBattleLog.Net;
 
 namespace AstralPartyBattleLog.UI;
 
@@ -55,6 +56,12 @@ internal static class ScheduleHealth
         public readonly SortedDictionary<int, long> Speeds = new();
         public int MaxQueue;
         public long MaxWaitUs;
+        public QueueHealth QueueStart;
+        public QueueHealth QueueLast;
+        public bool QueueSeen;
+        public bool QueueBased;
+        public int QueueMaxSize;
+        public int QueueMaxWait;
     }
 
     private static readonly object Sync = new();
@@ -67,6 +74,8 @@ internal static class ScheduleHealth
     private static HookState _hook;
     private static bool _gating;
     private static long _speedAccUs;
+    private static QueueHealth _queueLatest;
+    private static bool _queueLatestValid;
 
     public static void Init(Action<string> write, Func<string>? replayState)
     {
@@ -198,6 +207,34 @@ internal static class ScheduleHealth
         }
     }
 
+    // 추적 값은 메인 스레드에서만 읽을 수 있고 판 관측은 IO 스레드에서도 닫히므로, 펌프가 최신 값을 여기 넘겨 둔다.
+    public static void Queue(bool enabled, in QueueHealth health)
+    {
+        lock (Sync)
+        {
+            if (!enabled)
+            {
+                _queueLatestValid = false;
+                if (_active is not null) _active.QueueSeen = false;
+                return;
+            }
+            _queueLatest = health;
+            _queueLatestValid = true;
+            if (_active is null) return;
+            Observation o = _active;
+            // 추적이 꺼진 채 열린 판은 시작 값이 없으므로, 판 도중 처음 받은 값을 시작점으로 삼는다.
+            if (!o.QueueBased)
+            {
+                o.QueueStart = health;
+                o.QueueBased = true;
+            }
+            o.QueueSeen = true;
+            o.QueueLast = health;
+            o.QueueMaxSize = Math.Max(o.QueueMaxSize, health.Size);
+            o.QueueMaxWait = Math.Max(o.QueueMaxWait, health.HeadWaitTicks);
+        }
+    }
+
     public static void Displayed(int gen, long waitUs) => Gen(gen, o =>
     {
         if (waitUs > o.MaxWaitUs) o.MaxWaitUs = waitUs;
@@ -223,6 +260,11 @@ internal static class ScheduleHealth
             Number = ++_numbers, Gen = gen, Partial = partial, Counts = new long[CountKinds],
         };
         _speedAccUs = 0;
+        if (_queueLatestValid)
+        {
+            _active.QueueStart = _queueLatest;
+            _active.QueueBased = true;
+        }
     }
 
     private static void CloseLocked(string why)
@@ -270,8 +312,40 @@ internal static class ScheduleHealth
             sb.Append(' ').Append((s.Key / 4f).ToString("0.##", CultureInfo.InvariantCulture)).Append("x=").Append(s.Value);
         sb.Append(" maxQueue=").Append(o.MaxQueue)
           .Append(" maxWait=").Append(o.MaxWaitUs / 1000).Append("ms");
+        AppendQueue(sb, o);
         return sb.ToString();
     }
+
+    private static void AppendQueue(StringBuilder sb, Observation o)
+    {
+        if (!o.QueueSeen)
+        {
+            sb.Append(" | queue off");
+            return;
+        }
+        QueueHealth a = o.QueueStart, b = o.QueueLast;
+        long frames = b.Frames - a.Frames;
+        sb.Append(" | queue live=").Append(Percent(b.LiveFrames - a.LiveFrames, frames))
+          .Append("% frozen=").Append(Percent(b.FrozenFrames - a.FrozenFrames, frames))
+          .Append("% matched=").Append(Grew(a.Matched, b.Matched))
+          .Append(" unmatched=").Append(Grew(a.Unmatched, b.Unmatched))
+          .Append(" unread=").Append(Grew(a.Unreadable, b.Unreadable))
+          .Append(" overflow=").Append(Grew(a.Overflow, b.Overflow))
+          .Append(" freeze=").Append(Grew(a.FreezeUnmatched, b.FreezeUnmatched))
+          .Append('/').Append(Grew(a.FreezeUnreadable, b.FreezeUnreadable))
+          .Append('/').Append(Grew(a.FreezeReconnect, b.FreezeReconnect))
+          .Append('/').Append(Grew(a.FreezeExit, b.FreezeExit))
+          .Append('/').Append(Grew(a.FreezeError, b.FreezeError))
+          .Append('/').Append(Grew(a.FreezeSocket, b.FreezeSocket))
+          .Append(" maxsize=").Append(o.QueueMaxSize)
+          .Append(" maxwait=").Append(o.QueueMaxWait).Append('t');
+    }
+
+    // 판 도중 추적이 다시 시작되어 누계가 줄면 음수 대신 0으로 둔다.
+    private static long Grew(long from, long to) => Math.Max(0, to - from);
+
+    private static long Percent(long part, long whole) =>
+        whole <= 0 ? 0 : (long)Math.Round(100.0 * Math.Max(0, part) / whole, MidpointRounding.AwayFromZero);
 
     private static void Row(StringBuilder sb, long[,] table, int gate)
     {

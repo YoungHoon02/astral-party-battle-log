@@ -248,6 +248,7 @@ internal static partial class OverlaySchedule
         if (rec) BeginPump(now);
         try
         {
+            _pushQueueHealth();
             RefreshQueue(now, rec);
             if (_gating) PumpGated(now, line, page, clear);
             else PumpModel(now, line, page, clear);

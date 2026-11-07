@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using AstralPartyBattleLog.Log;
+using AstralPartyBattleLog.Net;
 using AstralPartyBattleLog.UI;
 using BepInEx.Logging;
 
@@ -89,9 +90,62 @@ static class HealthTests
         Check(lines[^1].Contains("hook=disabled mode=model changes=0"), "HS6 현재 후킹 상태는 새 관측에 승계된다");
         Check(!OverlaySchedule.TraceTiming, "HS7 TraceTiming이 꺼져 있어도 요약이 나온다");
 
+        RunQueueHealth(lines);
+
         RunCandidates();
         Console.WriteLine(_fail == 0 ? "=== 건강·후보 전부 통과 ===" : $"=== 건강·후보 실패 {_fail}건 ===");
         return _fail;
+    }
+
+    static QueueHealth Q(long frames, long live, long frozen, long matched, long unmatched, int size, int wait,
+                         long freezeReconnect = 0) => new()
+    {
+        Frames = frames, LiveFrames = live, FrozenFrames = frozen, Matched = matched, Unmatched = unmatched,
+        Unreadable = 2 * matched, Overflow = unmatched, FreezeReconnect = freezeReconnect, Size = size, HeadWaitTicks = wait,
+    };
+
+    static void RunQueueHealth(List<string> lines)
+    {
+        Console.WriteLine("  -- HS-Q1 대기열 추적 요약");
+        ScheduleHealth.Queue(true, Q(1000, 900, 100, 50, 5, 7, 3));
+        OverlaySchedule.Reset();
+        ScheduleHealth.Queue(true, Q(1100, 950, 150, 60, 5, 12, 40, freezeReconnect: 2));
+        ScheduleHealth.Queue(true, Q(1500, 1200, 300, 80, 9, 4, 10, freezeReconnect: 3));
+        OverlaySchedule.Discard();
+        int before = lines.Count;
+        string game = lines[^1];
+        Check(game.EndsWith(" | queue live=60% frozen=40% matched=30 unmatched=4 unread=60 overflow=4 "
+                            + "freeze=0/0/3/0/0/0 maxsize=12 maxwait=40t"),
+              "HS-Q1 켠 판은 시작과의 차이와 최댓값을 남긴다", Tail(game, "| queue"));
+        Check(game.Split('\n').Length == 1 && game.Contains("| clock "), "HS-Q1 게임 줄은 한 줄이고 기존 구간을 유지한다");
+
+        OverlaySchedule.Reset();
+        ScheduleHealth.Queue(true, Q(1500, 1200, 300, 80, 9, 4, 10));
+        OverlaySchedule.Discard();
+        Check(lines[^1].EndsWith(" | queue live=0% frozen=0% matched=0 unmatched=0 unread=0 overflow=0 "
+                                 + "freeze=0/0/0/0/0/0 maxsize=4 maxwait=10t"),
+              "HS-Q1 프레임이 늘지 않아도 0%로 유효한 줄을 남긴다", Tail(lines[^1], "| queue"));
+
+        ScheduleHealth.Queue(false, default);
+        OverlaySchedule.Reset();
+        ScheduleHealth.Queue(false, Q(10, 10, 0, 1, 0, 1, 1));
+        OverlaySchedule.Discard();
+        Check(lines[^1].EndsWith(" | queue off"), "HS-Q1 꺼져 있으면 queue off", Tail(lines[^1], "| queue"));
+
+        ScheduleHealth.Queue(true, Q(2000, 1900, 100, 90, 9, 3, 3));
+        OverlaySchedule.Reset();
+        OverlaySchedule.Discard();
+        Check(lines[^1].EndsWith(" | queue off"), "HS-Q1 그 판에 값을 받지 않았으면 queue off", Tail(lines[^1], "| queue"));
+
+        ScheduleHealth.Queue(false, default);
+        OverlaySchedule.Reset();
+        ScheduleHealth.Queue(true, Q(3000, 2900, 100, 100, 9, 2, 5));
+        ScheduleHealth.Queue(true, Q(3100, 2950, 150, 110, 9, 6, 7));
+        OverlaySchedule.Discard();
+        Check(lines[^1].EndsWith(" | queue live=50% frozen=50% matched=10 unmatched=0 unread=20 overflow=0 "
+                                 + "freeze=0/0/0/0/0/0 maxsize=6 maxwait=7t"),
+              "HS-Q1 꺼진 채 열린 판은 처음 받은 값부터 센다", Tail(lines[^1], "| queue"));
+        Check(lines.Count == before + 4, "HS-Q1 판마다 정확히 한 줄", $"{lines.Count - before}줄");
     }
 
     static string Tail(string s, string from)

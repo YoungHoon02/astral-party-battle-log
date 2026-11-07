@@ -44,6 +44,7 @@ internal static partial class OverlaySchedule
             _sink = sink;
             _recording = true;
             _readQueue = () => _queue;
+            _pushQueueHealth = () => { };
             _drainLinks = into =>
             {
                 into.AddRange(PumpLinks);

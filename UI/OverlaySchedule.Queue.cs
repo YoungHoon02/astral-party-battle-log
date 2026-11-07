@@ -18,6 +18,9 @@ internal static partial class OverlaySchedule
     private static Func<QueueSnapshot> _readQueue = QueueTracker.Snapshot;
     private static Func<List<(long Opener, long End)>, int> _drainLinks = QueueTracker.DrainLinks;
 
+    // 재생 중에는 실제 추적기가 없으므로 재생기가 아무것도 하지 않는 동작으로 바꿔 끼운다.
+    private static Action _pushQueueHealth = () => ScheduleHealth.Queue(QueueTracker.Enabled, QueueTracker.Health);
+
     private static QueueSnapshot _q;
     private static QueueSnapshot _qSignal;
     private static QueueSnapshot _recordedQ;
