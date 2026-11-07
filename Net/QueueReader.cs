@@ -42,14 +42,6 @@ internal static unsafe class QueueReader
     private static int _rpcOffset, _listOffset, _itemsOffset, _sizeOffset, _cmdOffset, _downOffset;
     private static IntPtr _seenInst, _seenRpc, _seenList, _seenElem;
 
-    public static string State => _phase switch
-    {
-        Phase.Disabled => "disabled:" + _reason,
-        _ when !QueueTracker.Enabled => "disabled:config",
-        Phase.Ready => "ready",
-        _ => "resolving",
-    };
-
     public static void Init(ManualLogSource log) => _log = log;
 
     public static void Disable(string reason)
