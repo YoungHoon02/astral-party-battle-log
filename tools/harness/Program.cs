@@ -706,6 +706,7 @@ class Program
         ExpectRelease("U4 모르는 스키마는 무시", Index("0.4.0", schema: 2), "무시: unknown index schema");
         ExpectRelease("U5 해시 형식이 틀리면 무시", Index("0.4.0", sha: "zz"), "무시: bad package digest");
 
+        fails += QueueTests.Run();
         fails += HealthTests.Run();
         fails += ReplayTests.Run(dir);
         Environment.Exit(fails);
