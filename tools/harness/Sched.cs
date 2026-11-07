@@ -719,6 +719,7 @@ static class Sched
         {
             Qs1(log); Qs2(log); Qs3(log); Qs4(log); Qs5(log); Qs6(log); Qs7(log); Qs8(log);
             Qs9(log); Qs10(log); Qs11(log); Qs12(log); Qs13(log); Qs14(log); Qs15(log);
+            Qs17(log); Qs18(log); Qs20(log);
         });
     }
 
@@ -730,6 +731,7 @@ static class Sched
         {
             Qs1(log); Qs2(log); Qs3(log); Qs4(log); Qs5(log);
             Qs10(log); Qs11(log); Qs12(log); Qs13(log); Qs14(log);
+            Qs17(log); Qs18(log); Qs20(log);
         });
         return _fail;
     }
@@ -973,6 +975,8 @@ static class Sched
         Advance(0.01);
         QExpect("QS10 카드가 처리 중일 때 꺼진 눈 3은 뒤 주사위(도착 2)에 짝짓지 않는다");
         QHead(2);
+        Advance(0.01);
+        QExpect("QS10 주사위가 시작돼도 앞서 버린 신호로는 내지 않는다");
         Sig(ScreenSignal.DiceFace, false, 3);
         Advance(0.01);
         QExpect("QS10 주사위가 처리 중일 때 꺼진 눈 3에 낸다", "d:own-signal");
@@ -1116,6 +1120,95 @@ static class Sched
             _fail++;
             Console.WriteLine("       기대: [shown R, shown X, unshown A, shown B]");
         }
+    }
+
+    // 오류 응답(도착 24)으로 추적이 60초 넘게 멈춘 동안 PK 줄이 상한으로 해결됐지만 모델 대기 카드 줄에 막혀 남았다.
+    static void Qs17(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(1);
+        QHead(1);
+        QLine("m", LineKind.Dice, QMsg(5022));
+        for (int i = 1; i <= 21; i++) QLine("c" + i, LineKind.Card, QMsg(5056));
+        QueueTracker.Arrive(5036, 9999, 1);
+        QArrivals.Add((5036, 9999));
+        long pk = QMsg(1007);
+        QLine("pk", LineKind.Attack, pk);
+        QHead(1);
+        for (int i = 0; i < 61; i++) Advance(1.0);
+        QExpect("QS17 멈춘 지 60초가 지나 지금 방식으로 돌아가면 상한과 모델 기한으로 낸다", "m:cap", "c1:model");
+        QHead(25);
+        var cards = new List<string>();
+        for (int i = 2; i <= 21; i++) cards.Add("c" + i + ":queue-start");
+        QExpect("QS17 PK 메시지(도착 25)가 시작돼 규칙이 돌아오면 카드 줄은 처리 시작에 내고 규칙 밖에서 해결된 PK 줄은 남긴다",
+                cards.ToArray());
+        Sig(ScreenSignal.Window, true);
+        Advance(2.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.01);
+        QExpect("QS17 그 PK의 처리 중 타격으로도 내지 않는다");
+        QMsg(1002);
+        QHead(26);
+        QExpect("QS17 PK 메시지의 처리가 끝나면 낸다", "pk:cap");
+    }
+
+    static void Qs18(ManualLogSource log)
+    {
+        // 타격 없는 PK(도착 1)의 창 꺼짐이 다음 PK(도착 3)가 시작된 펌프보다 늦게 왔다.
+        QStart(log);
+        long p0 = QMsg(1007);
+        QMsg(1040);
+        long p1 = QMsg(1007);
+        QLine("p0", LineKind.Attack, p0);
+        QLine("p1", LineKind.Attack, p1);
+        QHead(1);
+        Sig(ScreenSignal.Window, true);
+        Advance(2.0);
+        QHead(3);
+        QExpect("QS18 타격 없는 PK는 처리가 끝나면 처리 끝으로 낸다", "p0:queue-end");
+        Sig(ScreenSignal.Window, false);
+        Advance(0.016);
+        QExpect("QS18 그 창의 꺼짐이 다음 PK가 시작된 뒤에 와도 다음 PK를 내지 않는다");
+        Sig(ScreenSignal.Window, true);
+        Advance(2.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.01);
+        QExpect("QS18 다음 PK는 자기 창의 타격에 낸다", "p1:own-signal");
+
+        // 타격 없는 PK의 창 꺼짐을 놓쳐 다음 PK의 창 켜짐이 그 창을 닫는다.
+        QStart(log);
+        p0 = QMsg(1007);
+        QMsg(1040);
+        p1 = QMsg(1007);
+        QLine("p0", LineKind.Attack, p0);
+        QLine("p1", LineKind.Attack, p1);
+        QHead(1);
+        Sig(ScreenSignal.Window, true);
+        Advance(2.0);
+        QHead(3);
+        Advance(1.0);
+        QExpect("QS18 창 꺼짐을 놓친 PK도 처리가 끝나면 처리 끝으로 낸다", "p0:queue-end");
+        Sig(ScreenSignal.Window, true);
+        Advance(0.016);
+        QExpect("QS18 다음 PK의 창 켜짐이 열린 창을 닫아도 다음 PK를 내지 않는다");
+        QMsg(1002);
+        QHead(4);
+        QExpect("QS18 타격이 없으면 다음 PK는 처리 끝에 낸다", "p1:queue-end");
+    }
+
+    static void Qs20(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(3);
+        QHead(1);
+        const long Dice = 1999;
+        QueueTracker.NoteGroup(Dice, -1, 5022);
+        QLine("d", LineKind.Dice, Dice, 3);
+        Advance(1.0);
+        QExpect("QS20 기준이 없는 주사위 줄은 신호를 기다린다");
+        Sig(ScreenSignal.DiceFace, false, 3);
+        Advance(0.01);
+        QExpect("QS20 대기열 규칙 적용 중에도 기준이 없는 주사위 줄은 지금처럼 자기 눈 신호에 낸다", "d:own-signal");
     }
 
     // docs/SIGNAL-GATING.md 6절 검증 계획

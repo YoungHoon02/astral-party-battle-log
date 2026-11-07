@@ -25,6 +25,7 @@ internal static partial class OverlaySchedule
         public long DueUs, FloorUs;
         public Resolution Res;
         public long ResolvedUs;
+        public bool OutsideRules;
         public Window? Win;
         // 계측 전용: 해결 사유와 원인 신호 번호.
         public Why Why;
@@ -48,6 +49,7 @@ internal static partial class OverlaySchedule
         public bool Ended;
         public long EndUs;
         public long StartUs;
+        public Entry? Owner;
     }
 
     private readonly struct PendingSignal
@@ -176,6 +178,7 @@ internal static partial class OverlaySchedule
             Queue.Add(NewEntry(item, seq));
         }
 
+        BindWindow();
         foreach (PendingSignal s in Signals)
         {
             TakeSignal(s);
@@ -221,10 +224,12 @@ internal static partial class OverlaySchedule
 
             if (head.Gate != Gate.None)
             {
-                if (head.Res == Resolution.None)
+                // 규칙 밖에서 한 해결(멈춘 추적의 상한 등)은 화면 위치를 말해 주지 않는다. 규칙이 돌아온 뒤 처리 시작에
+                // 내면 결과가 연출보다 먼저 뜨므로 처리 끝까지 붙잡는다(하네스 QS17).
+                if (head.Res == Resolution.None || queued && head.OutsideRules && !EndedOf(head.Item))
                 {
                     if (Queue.Count <= MaxWaiting) break;
-                    Resolve(head, Resolution.Cap, now, Why.Budget);
+                    if (head.Res == Resolution.None) Resolve(head, Resolution.Cap, now, Why.Budget);
                 }
                 ReleaseGated(head, now, line, page, clear);
                 continue;
@@ -432,8 +437,11 @@ internal static partial class OverlaySchedule
                 ActiveHits.Clear();
                 if (s.On)
                 {
-                    CloseWindow(s.AtUs);
+                    // 앞 창의 꺼짐을 놓친 것이다. 대기열 규칙 적용 중에는 신호를 놓친 줄처럼 처리 끝에 맡기고 정산하지
+                    // 않는다(하네스 QS18).
+                    CloseWindow(s.AtUs, settle: !_queueActive);
                     _window = new Window { StartUs = s.AtUs };
+                    BindWindow();
                     PkStarted(s.AtUs);
                 }
                 else CloseWindow(s.AtUs);
@@ -472,13 +480,27 @@ internal static partial class OverlaySchedule
         }
     }
 
-    private static void CloseWindow(long atUs)
+    private static void CloseWindow(long atUs, bool settle = true)
     {
         if (_window is null) return;
         _window.Ended = true;
         _window.EndUs = atUs;
-        if (_window.Strikes == 0) SettleWeak(_window, atUs);
+        if (_window.Strikes == 0 && settle) SettleWeak(_window, atUs);
         _window = null;
+    }
+
+    // 창이 열린 동안 처음 처리 중이 된 원래 PK가 그 창의 PK다. 이미 해결된 PK도 묶어야 그 뒤 PK가 대신 묶이지 않는다.
+    private static void BindWindow()
+    {
+        if (!_queueActive || _window is not { Owner: null } w) return;
+        foreach (Entry e in Queue)
+        {
+            if (e.Gate != Gate.Pk || e.Counter) continue;
+            Fit fit = SignalFit(e);
+            if (fit == Fit.Skip) continue;
+            if (fit == Fit.Take) w.Owner = e;
+            return;
+        }
     }
 
     // 로거가 주사위 여러 개의 눈을 두 자리씩 담아 넘긴다("5+2" → 205). 0이면 눈을 모른다(몬스터 등).
@@ -589,6 +611,11 @@ internal static partial class OverlaySchedule
     // 않으면 타격 없는 캐릭터의 결과가 뒤 PK의 타격을 대신 소비하는 연쇄가 생긴다(일곱째 판).
     private static void SettleWeak(Window w, long atUs)
     {
+        if (_queueActive)
+        {
+            SettleOwner(w, atUs);
+            return;
+        }
         (Entry? pending, Ledger? owed) = OldestPk(afterSeq: -1, atUs, originalOnly: true);
         if (owed is not null && (pending is null || owed.Seq < pending.Seq))
         {
@@ -608,6 +635,29 @@ internal static partial class OverlaySchedule
         pending.Win = w;
         ResolveOlder(pending.Seq, atUs);
         Note(Diag.WeakSettle, pending.Item.Id);
+        GateTrace("weak settle=pending");
+    }
+
+    // 대기열 규칙 적용 중에는 그 창에 묶인 PK만 정산한다. 꺼짐이 늦게 와 다음 PK가 이미 처리 중이어도 그 PK를 대신
+    // 내지 않는다(하네스 QS18).
+    private static void SettleOwner(Window w, long atUs)
+    {
+        Entry? owner = w.Owner;
+        if (owner is null)
+        {
+            Note(Diag.WeakOrphan);
+            if (ScreenCandidates.Enabled) ScreenCandidates.Gap(GapKind.WeakOrphan, "pk", w.StartUs, atUs);
+            GateTrace("weak-orphan");
+            return;
+        }
+        if (owner.Res != Resolution.None)
+        {
+            GateTrace("weak settle=resolved");
+            return;
+        }
+        Resolve(owner, Resolution.Signal, atUs, Why.WindowClose);
+        owner.Win = w;
+        Note(Diag.WeakSettle, owner.Item.Id);
         GateTrace("weak settle=pending");
     }
 
@@ -650,6 +700,7 @@ internal static partial class OverlaySchedule
     {
         e.Res = how;
         e.ResolvedUs = atUs;
+        e.OutsideRules = !_queueActive;
         e.Why = why;
         e.CauseId = how == Resolution.Cap ? Null : _cause;
         ScheduleHealth.GateResolved(e.Item.Generation, GateIndex(e.Gate), HealthResolution(why));
