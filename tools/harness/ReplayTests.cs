@@ -219,6 +219,7 @@ static class ReplayTests
         CheckCorruption(bytes, lines);
         CheckScenarios(dir);
         CheckWriter(dir);
+        CheckSpanOrder();
 
         Console.WriteLine(_fail == 0 ? "=== 재생 전부 통과 ===" : $"=== 재생 실패 {_fail}건 ===");
         return _fail;
@@ -336,6 +337,38 @@ static class ReplayTests
         var noHeader = new List<string>(lines);
         noHeader.RemoveAt(0);
         Rejects(Reseal(noHeader, true), "C14 버전 헤더 없는 파일 거부", "버전 헤더 없음");
+    }
+
+    static ReplayCheck.Rec Synth(string type, string fields) =>
+        new() { Type = type, E = JsonDocument.Parse($"{{\"type\":\"{type}\"{fields}}}").RootElement.Clone() };
+
+    // IO 스레드의 item/queue-ref 기록이 메인 스레드 pump-begin을 걸친 순서.
+    static void CheckSpanOrder()
+    {
+        string item(int id) => $",\"itemId\":{id},\"signal\":\"line\",\"kind\":\"effect\",\"group\":{id},\"units\":0,\"detail\":0,"
+                               + "\"round\":0,\"receivedUs\":10,\"speedBits\":1065353216,\"gen\":0,\"parentControlId\":null";
+        var recs = new List<ReplayCheck.Rec>
+        {
+            Synth("item", item(1)),
+            Synth("pump-begin", ",\"pumpId\":1,\"nowUs\":20,\"mode\":\"gated\",\"observedGen\":0"),
+            Synth("queue-ref", ",\"itemId\":1,\"ref\":7,\"flags\":1"),
+            Synth("item", item(2)),
+            Synth("queue-ref", ",\"itemId\":2,\"ref\":8,\"flags\":3"),
+            Synth("take", ",\"pumpId\":1,\"itemRef\":1"),
+            Synth("take", ",\"pumpId\":1,\"itemRef\":2"),
+            Synth("pump-end", ",\"pumpId\":1,\"observedGen\":0,\"overlap\":false"),
+        };
+        var items = new Dictionary<long, OverlaySchedule.ItemIn>();
+        ReplayCheck.PumpInputs(recs, 0, 0, items, out _, new Dictionary<long, OverlaySchedule.SignalIn>());
+        ReplayCheck.PumpInputs(recs, 0, 1, items, out _, new Dictionary<long, OverlaySchedule.SignalIn>());
+        string? err = null;
+        List<OverlaySchedule.ItemIn> taken = new();
+        try { taken = ReplayCheck.PumpInputs(recs, 2, 7, items, out _, new Dictionary<long, OverlaySchedule.SignalIn>()); }
+        catch (Exception e) { err = e.GetType().Name; }
+        Check(err is null && taken.Count == 2 && taken[0] is { Ref: 7, Result: true, Opener: false }
+              && taken[1] is { Ref: 8, Result: true, Opener: true },
+              "RP8 pump 구간 안의 item·queue-ref는 그 Pump의 입력 주입 전에 반영된다(예외 없음, Ref 보존)",
+              err ?? string.Join(" ", taken.Select(t => $"id{t.Id}:ref{t.Ref}")));
     }
 
     static void CheckScenarios(string dir)

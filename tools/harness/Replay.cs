@@ -249,6 +249,42 @@ static class ReplayCheck
         return ok && p.Problems.Count == 0 ? 0 : 1;
     }
 
+    static void ApplyInput(Rec r, Dictionary<long, OverlaySchedule.ItemIn> items)
+    {
+        JsonElement e = r.E;
+        long id = e.GetProperty("itemId").GetInt64();
+        if (r.Type == "item")
+        {
+            items[id] = new OverlaySchedule.ItemIn(
+                id, e.GetProperty("signal").GetString()!, e.GetProperty("kind").GetString()!,
+                e.GetProperty("group").GetInt64(), (int)e.GetProperty("units").GetInt64(), (int)e.GetProperty("detail").GetInt64(),
+                (int)e.GetProperty("round").GetInt64(), e.GetProperty("receivedUs").GetInt64(),
+                (int)e.GetProperty("speedBits").GetInt64(), (int)e.GetProperty("gen").GetInt64());
+            return;
+        }
+        long flags = e.GetProperty("flags").GetInt64();
+        if (items.TryGetValue(id, out OverlaySchedule.ItemIn it))
+            items[id] = it with { Ref = e.GetProperty("ref").GetInt64(), Result = (flags & 1) != 0, Opener = (flags & 2) != 0 };
+    }
+
+    // IO 스레드의 item·queue-ref 기록이 메인 스레드 pump-begin을 걸칠 수 있다. 그 Pump가 꺼낼 입력은
+    // 구간 안의 item·queue-ref를 모두 반영한 뒤에 모은다.
+    internal static List<OverlaySchedule.ItemIn> PumpInputs(List<Rec> recs, int from, int to,
+        Dictionary<long, OverlaySchedule.ItemIn> items, out List<OverlaySchedule.SignalIn> takeSignals,
+        Dictionary<long, OverlaySchedule.SignalIn> signals)
+    {
+        for (int k = from; k < to; k++)
+            if (recs[k].Type is "item" or "queue-ref") ApplyInput(recs[k], items);
+        var takeItems = new List<OverlaySchedule.ItemIn>();
+        takeSignals = new List<OverlaySchedule.SignalIn>();
+        for (int k = from; k < to; k++)
+        {
+            if (recs[k].Type == "take") takeItems.Add(items[recs[k].E.GetProperty("itemRef").GetInt64()]);
+            else if (recs[k].Type == "signal-take") takeSignals.Add(signals[recs[k].E.GetProperty("signalRef").GetInt64()]);
+        }
+        return takeItems;
+    }
+
     // 기록된 입력·시각을 실제 스케줄러에 주입한다. 결정은 sink로, 기록의 결정은 expected로 모은다.
     static string? Drive(List<Rec> recs, MemorySink sink, out List<string> expected,
                          out Dictionary<long, OverlaySchedule.ItemIn> items, out int marks)
@@ -275,16 +311,8 @@ static class ReplayCheck
                     OverlaySchedule.ReplayPort.Clock(e.GetProperty("nowUs").GetInt64(), (int)e.GetProperty("speedBits").GetInt64());
                     break;
                 case "item":
-                    items[e.GetProperty("itemId").GetInt64()] = new OverlaySchedule.ItemIn(
-                        e.GetProperty("itemId").GetInt64(), e.GetProperty("signal").GetString()!, e.GetProperty("kind").GetString()!,
-                        e.GetProperty("group").GetInt64(), (int)e.GetProperty("units").GetInt64(), (int)e.GetProperty("detail").GetInt64(),
-                        (int)e.GetProperty("round").GetInt64(), e.GetProperty("receivedUs").GetInt64(),
-                        (int)e.GetProperty("speedBits").GetInt64(), (int)e.GetProperty("gen").GetInt64());
-                    break;
                 case "queue-ref":
-                    long refItem = e.GetProperty("itemId").GetInt64();
-                    long flags = e.GetProperty("flags").GetInt64();
-                    items[refItem] = items[refItem] with { Ref = e.GetProperty("ref").GetInt64(), Result = (flags & 1) != 0, Opener = (flags & 2) != 0 };
+                    ApplyInput(r, items);
                     break;
                 case "signal":
                     signals[e.GetProperty("signalId").GetInt64()] = new OverlaySchedule.SignalIn(
@@ -310,13 +338,7 @@ static class ReplayCheck
                         stop = $"{i + 1}번째 줄 Pump가 끝나지 않아 여기서 멈춘다";
                         break;
                     }
-                    var takeItems = new List<OverlaySchedule.ItemIn>();
-                    var takeSignals = new List<OverlaySchedule.SignalIn>();
-                    for (int k = i + 1; k < endAt; k++)
-                    {
-                        if (recs[k].Type == "take") takeItems.Add(items[recs[k].E.GetProperty("itemRef").GetInt64()]);
-                        else if (recs[k].Type == "signal-take") takeSignals.Add(signals[recs[k].E.GetProperty("signalRef").GetInt64()]);
-                    }
+                    List<OverlaySchedule.ItemIn> takeItems = PumpInputs(recs, i + 1, endAt, items, out var takeSignals, signals);
                     stop = OverlaySchedule.ReplayPort.Pump(e.GetProperty("pumpId").GetInt64(), e.GetProperty("nowUs").GetInt64(),
                                                            e.GetProperty("mode").GetString() == "gated",
                                                            (int)e.GetProperty("observedGen").GetInt64(), takeItems, takeSignals);
