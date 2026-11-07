@@ -872,7 +872,12 @@ internal sealed class BattleLogger
             return;
         }
 
-        bool isHp(string l) => _hpLines.Exists(h => ReferenceEquals(h, l));
+        bool isHp(string l)
+        {
+            foreach (string h in _hpLines)
+                if (ReferenceEquals(h, l)) return true;
+            return false;
+        }
         // PK 화면은 타격 때 체력만 보여 준다. 골드·버프·처치·레벨은 PK 연출 뒤 1040 처리기가 보여 주므로 PK 그룹에 묶지 않는다.
         bool split = pkGroup >= 0 && lines.Exists(isHp);
         long headGroup = split ? pkGroup : _group;

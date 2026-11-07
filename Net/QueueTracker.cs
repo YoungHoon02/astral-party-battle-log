@@ -74,10 +74,10 @@ internal static class QueueTracker
     private readonly struct Arrival
     {
         public readonly long Num;
-        public readonly int Cmd;
         public readonly long Down;
-        public readonly int Tick;
         public readonly long AtUs;
+        public readonly int Cmd;
+        public readonly int Tick;
 
         public Arrival(long num, int cmd, long down, int tick, long atUs)
         {
@@ -301,11 +301,14 @@ internal static class QueueTracker
 
     public static void NoteGroup(long group, long arrival, int cmd)
     {
+        if (arrival < 0) return;
         lock (GroupGate)
         {
-            bool known = Groups.ContainsKey(group);
-            Groups[group] = (arrival, cmd);
-            if (known) return;
+            if (!Groups.TryAdd(group, (arrival, cmd)))
+            {
+                Groups[group] = (arrival, cmd);
+                return;
+            }
             GroupOrder.Enqueue(group);
             if (Groups.Count <= MaxGroups) return;
             int drop = Groups.Count / 2;
@@ -515,7 +518,7 @@ internal static class QueueTracker
         _lastUnmatched = null;
         if (++_emptyRun < EmptyTicksToResume) return;
 
-        long nowUs = ClockUs();
+        long nowUs = Pending.Count > 0 ? ClockUs() : 0;
         int n = 0;
         while (n < Pending.Count && tick - Pending[n].Tick >= ArrivalMarginTicks && nowUs - Pending[n].AtUs >= ArrivalMarginUs) n++;
         if (n > 0)

@@ -75,9 +75,9 @@ internal static unsafe class QueueReader
 
         IntPtr items = *(IntPtr*)(list + _itemsOffset);
         int size = *(int*)(list + _sizeOffset);
-        if (items == IntPtr.Zero || size < 0 || (uint)size > IL2CPP.il2cpp_array_length(items))
-            return QueueObservation.Unreadable;
+        if (items == IntPtr.Zero || size < 0) return QueueObservation.Unreadable;
         if (size == 0) return new QueueObservation(QueueRead.Empty);
+        if ((uint)size > IL2CPP.il2cpp_array_length(items)) return QueueObservation.Unreadable;
 
         // 배열 원소는 머리(klass, monitor, bounds, max_length) 뒤에서 시작한다.
         IntPtr elem = *(IntPtr*)(items + 4 * IntPtr.Size);

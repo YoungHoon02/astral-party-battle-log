@@ -51,9 +51,11 @@ internal static partial class OverlaySchedule
             if (stalled)
             {
                 List<long>? old = null;
+                // 줄은 한 번에 하나씩 받은 순서대로 키를 받으므로 받은 시각도 키 순서로 늘어난다.
+                // 아직 젊은 줄이 나오면 그 뒤도 모두 젊다.
                 foreach (var kv in FilePending)
                 {
-                    if (nowUs - kv.Value.AtUs < FileUnshownAgeUs) continue;
+                    if (nowUs - kv.Value.AtUs < FileUnshownAgeUs) break;
                     file.AppendUnshown(kv.Value.Text, kv.Value.At);
                     (old ??= new()).Add(kv.Key);
                 }
