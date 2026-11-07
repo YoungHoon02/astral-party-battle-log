@@ -363,6 +363,35 @@ static class Sched
         Check("F6 판을 나가 버려진 줄과 종료 때 대기 중인 줄은 미표시로 남음",
               got.Length == 4 && unshown.IsMatch(got[2]) && got[2].EndsWith("left")
               && unshown.IsMatch(got[3]) && got[3].EndsWith("exit"));
+
+        string stallFile = file + ".stall";
+        File.WriteAllText(stallFile, "");
+        var stallWriter = new LogFileWriter(stallFile, _ => { });
+        Func<long> realClock = OverlaySchedule.FileClockUs;
+        long fileUs = 0;
+        OverlaySchedule.FileClockUs = () => fileUs;
+        string[] stalled;
+        try
+        {
+            Setup(log);
+            OverlaySchedule.AttachFile(stallWriter);
+            OverlaySchedule.Line("OLD", LineKind.Attack, 1, 0);
+            fileUs = 75_000_000;
+            OverlaySchedule.Line("YOUNG", LineKind.Attack, 2, 0);
+            fileUs = 130_000_000;
+            OverlaySchedule.Line("NEW", LineKind.Attack, 3, 0);
+            stallWriter.Close();
+            stalled = File.ReadAllLines(stallFile);
+        }
+        finally
+        {
+            OverlaySchedule.FileClockUs = realClock;
+            OverlaySchedule.FlushFile();
+            OverlaySchedule.AttachFile(null);
+            Out.Clear();
+        }
+        Check($"F7 펌프가 60초 넘게 멈춰도 130초 된 줄만 미표시로 쓰고 55초 된 줄은 보류한다 ({string.Join(" | ", stalled)})",
+              stalled.Length == 1 && stalled[0].StartsWith("미표시 (수신 ") && stalled[0].EndsWith(" OLD"));
         return fail;
     }
 
@@ -1093,7 +1122,7 @@ static class Sched
             QHead(3);
             QExpect("QS15 처리가 끝나면 결과 줄, 시작되면 카드 줄", "R:queue-end", "X:queue-start");
             QLine("A", LineKind.Card, QMsg(5056));
-            fileUs += 61_000_000;
+            fileUs += 121_000_000;
             QLine("B", LineKind.Card, QMsg(5056));
             QHead(5);
             Out.Clear();
@@ -1114,7 +1143,7 @@ static class Sched
         string seq = string.Join(", ", Array.ConvertAll(got, Shape));
         bool ok = seq == "shown R, shown X, unshown A, shown B";
         Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} QS15 펌프가 도는 동안 130초 기다린 결과 줄은 미표시로 쓰지 않고 나갈 때 쓰며, "
-                          + $"펌프가 61초 멈춘 뒤 들어온 줄이 앞 대기 줄을 미표시로 쓴다: [{seq}]");
+                          + $"펌프가 멈춘 채 121초 된 앞 대기 줄은 다음 줄이 들어올 때 미표시로 쓴다: [{seq}]");
         if (!ok)
         {
             _fail++;

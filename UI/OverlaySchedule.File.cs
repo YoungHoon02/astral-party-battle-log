@@ -11,11 +11,13 @@ namespace AstralPartyBattleLog.UI;
 internal static partial class OverlaySchedule
 {
     // 펌프가 이만큼 돌지 않으면(프레임 후크 오류 등) 보류 중인 줄을 미표시로 써서 파일 기록이 영영 막히지 않게 한다.
-    // 줄의 나이로 재면 대기열 규칙으로 오래 기다리는 줄이 오버레이보다 먼저 파일에 쓰인다(docs/QUEUE-SYNC.md 규칙 8).
+    // 줄의 나이만으로 재면 대기열 규칙으로 오래 기다리는 줄이 오버레이보다 먼저 파일에 쓰인다(docs/QUEUE-SYNC.md 규칙 8).
+    // 멈춘 동안 방금 받은 줄은 게임이 아직 못 보여 줬을 뿐이라, 충분히 오래된 줄만 미표시로 쓴다.
     private const long FileStallMarginUs = 60_000_000;
+    private const long FileUnshownAgeUs = 120_000_000;
 
     private static readonly object FileGate = new();
-    private static readonly SortedDictionary<long, (DateTime At, string Text)> FilePending = new();
+    private static readonly SortedDictionary<long, (DateTime At, long AtUs, string Text)> FilePending = new();
     private static LogFileWriter? _file;
     private static long _fileKeys;
 
@@ -38,18 +40,25 @@ internal static partial class OverlaySchedule
     {
         if (_file is null) return 0;
         DateTime now = DateTime.Now;
-        bool stalled = FileClockUs() - Volatile.Read(ref _lastPumpUs) >= FileStallMarginUs;
+        long nowUs = FileClockUs();
+        bool stalled = nowUs - Volatile.Read(ref _lastPumpUs) >= FileStallMarginUs;
         lock (FileGate)
         {
             LogFileWriter? file = _file;
             if (file is null) return 0;
             if (stalled)
             {
-                foreach ((DateTime at, string pending) in FilePending.Values) file.AppendUnshown(pending, at);
-                FilePending.Clear();
+                List<long>? old = null;
+                foreach (var kv in FilePending)
+                {
+                    if (nowUs - kv.Value.AtUs < FileUnshownAgeUs) continue;
+                    file.AppendUnshown(kv.Value.Text, kv.Value.At);
+                    (old ??= new()).Add(kv.Key);
+                }
+                if (old is not null) foreach (long k in old) FilePending.Remove(k);
             }
             long next = ++_fileKeys;
-            FilePending[next] = (now, Palette.Strip(text));
+            FilePending[next] = (now, nowUs, Palette.Strip(text));
             return next;
         }
     }
@@ -59,7 +68,7 @@ internal static partial class OverlaySchedule
         if (key == 0) return;
         lock (FileGate)
         {
-            if (!FilePending.Remove(key, out (DateTime At, string Text) entry)) return;
+            if (!FilePending.Remove(key, out (DateTime At, long AtUs, string Text) entry)) return;
             if (shown) _file?.AppendShown(entry.Text, entry.At);
             else _file?.AppendUnshown(entry.Text, entry.At);
         }
@@ -76,7 +85,7 @@ internal static partial class OverlaySchedule
     {
         lock (FileGate)
         {
-            foreach ((DateTime at, string text) in FilePending.Values) _file?.AppendUnshown(text, at);
+            foreach ((DateTime at, _, string text) in FilePending.Values) _file?.AppendUnshown(text, at);
             FilePending.Clear();
         }
     }
