@@ -20,8 +20,9 @@ internal static partial class OverlaySchedule
     private static long _fileKeys;
 
     // 펌프 멈춤은 펌프와 함께 멈추는 스케줄러 시계로 잴 수 없어 벽시계를 쓴다. 하네스가 바꿔 끼운다.
+    // 원시 틱에 100만을 곱하면 게임을 약 10.7일 켜 둔 뒤 넘치므로 100ns 단위 경과 시간을 나눈다.
     private static readonly Stopwatch FileWatch = Stopwatch.StartNew();
-    internal static Func<long> FileClockUs = () => FileWatch.ElapsedTicks * 1_000_000L / Stopwatch.Frequency;
+    internal static Func<long> FileClockUs = () => FileWatch.Elapsed.Ticks / 10;
     private static long _lastPumpUs;
 
     public static void AttachFile(LogFileWriter? file)
