@@ -12,7 +12,7 @@ internal static partial class OverlaySchedule
 {
     internal readonly record struct ItemIn(
         long Id, string Signal, string Kind, long Group, int Units, int Detail, int Round, long ReceivedUs,
-        int SpeedBits, int Gen);
+        int SpeedBits, int Gen, long Ref = -1, bool Result = false, bool Opener = false);
 
     internal readonly record struct SignalIn(
         long Id, long AtUs, int Gen, string Kind, int Pip, bool On, long InstanceId);
@@ -22,6 +22,14 @@ internal static partial class OverlaySchedule
         private static readonly Action<string> NoLine = _ => { };
         private static readonly Action<int> NoPage = _ => { };
         private static readonly Action NoClear = () => { };
+
+        public static IReplaySink? Current => _recording ? _sink : null;
+
+        public static void Swap(IReplaySink? sink)
+        {
+            _sink = sink;
+            _recording = sink is not null;
+        }
 
         public static void Attach(IReplaySink sink)
         {
@@ -59,7 +67,7 @@ internal static partial class OverlaySchedule
                 Incoming.Enqueue(new Item(
                     (Signal)Array.IndexOf(ItemSignalNames, i.Signal), Enum.Parse<LineKind>(i.Kind, ignoreCase: true),
                     i.Group, i.Units, i.ReceivedUs, BitConverter.Int32BitsToSingle(i.SpeedBits), i.Gen, null, i.Round,
-                    i.Detail, i.Id));
+                    i.Detail, i.Id, 0, i.Ref, i.Result, i.Opener));
             foreach (SignalIn s in signals)
                 Signals.Add(new PendingSignal(
                     (ScreenSignal)Array.IndexOf(ScreenNames, s.Kind), s.Pip, s.On, (IntPtr)s.InstanceId, s.AtUs, s.Gen,

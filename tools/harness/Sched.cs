@@ -492,6 +492,159 @@ static class Sched
         if (!ok) _fail++;
     }
 
+    // 기록 켜기/끄기와 무관하게 이 시험이 낸 레코드를 읽기 위해, 있던 sink 앞에 끼워 넣는다.
+    sealed class TeeSink : IReplaySink
+    {
+        readonly IReplaySink? _inner;
+        readonly System.Text.StringBuilder _sb = new();
+        public readonly List<System.Text.Json.JsonElement> Records = new();
+        public long LastItem;
+
+        public TeeSink(IReplaySink? inner) => _inner = inner;
+
+        public void Add(ReplayRecord r)
+        {
+            _sb.Clear().Append('{');
+            OverlaySchedule.FormatRecord(_sb, r);
+            var e = System.Text.Json.JsonDocument.Parse(_sb.ToString()).RootElement.Clone();
+            Records.Add(e);
+            if (e.GetProperty("type").GetString() == "item") LastItem = e.GetProperty("itemId").GetInt64();
+            _inner?.Add(r);
+        }
+    }
+
+    // 줄 기준 연결(docs/QUEUE-SYNC.md "줄마다 기준이 되는 메시지"). 실제 BattleLogger → 스케줄러 경로로 확인한다.
+    static void RunQueueRefs(ManualLogSource log)
+    {
+        const long Char = 100, Monster = 200;
+        var names = NameTable.Load(Path.Combine(Path.GetTempPath(), "apbl-harness-no-names.tsv"), _ => { });
+        IReplaySink? previous = OverlaySchedule.ReplayPort.Current;
+        var tee = new TeeSink(previous);
+        OverlaySchedule.ReplayPort.Swap(tee);
+        try
+        {
+            (BattleLogger Lg, List<(string Text, long Id)> Lines) Start()
+            {
+                QueueTracker.ResetForTest();
+                QueueTracker.Configure(true);
+                Setup(log);
+                tee.Records.Clear();
+                var lines = new List<(string Text, long Id)>();
+                var lg = new BattleLogger(log, null, false, new HashSet<int>(), false, true, names);
+                lg.Mirror = (s, k, g, u, d) =>
+                {
+                    OverlaySchedule.Line(s, k, g, u, d);
+                    lines.Add((Palette.Strip(s).Trim(), tee.LastItem));
+                };
+                lg.MirrorNewPage = (r, g) =>
+                {
+                    OverlaySchedule.Page(r, g);
+                    lines.Add(($"<page {r}>", tee.LastItem));
+                };
+                return (lg, lines);
+            }
+
+            (long Ref, long Flags)? RefOf(long id)
+            {
+                foreach (var e in tee.Records)
+                    if (e.GetProperty("type").GetString() == "queue-ref" && e.GetProperty("itemId").GetInt64() == id)
+                        return (e.GetProperty("ref").GetInt64(), e.GetProperty("flags").GetInt64());
+                return null;
+            }
+
+            string Show((long Ref, long Flags)? r) => r is { } v ? $"ref={v.Ref} flags={v.Flags}" : "none";
+
+            void Verdict(bool ok, string label)
+            {
+                Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} {label}");
+                if (!ok) _fail++;
+            }
+
+            void Dice(BattleLogger lg) =>
+                lg.OnFrame(new FrameHeader(Op.ThrowDice, 0, 0, 0), Frame.Cat(Frame.Varint(1, 6), Frame.Fix64(3, Char)));
+
+            {
+                var (lg, lines) = Start();
+                Dice(lg);
+                var r = RefOf(lines[0].Id);
+                Verdict(lines.Count == 1 && r is { Ref: 1, Flags: 2 }, $"QS-R1 주사위(5022) 줄은 기준 1, 열린 메시지 플래그만: {Show(r)}");
+            }
+
+            foreach (bool goldFirst in new[] { true, false })
+            {
+                var (lg, lines) = Start();
+                Dice(lg);
+                lg.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), PkBattle());
+                int before = lines.Count;
+                byte[] gold = PkEffect(Monster, hp: false, gold: true), hp = PkEffect(Monster, hp: true, gold: false);
+                lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0),
+                           Frame.Cat(Frame.Fix64(1, Char), PkCause(), goldFirst ? gold : hp, goldFirst ? hp : gold));
+                var got = lines.GetRange(before, lines.Count - before);
+                var r0 = got.Count == 2 ? RefOf(got[0].Id) : null;
+                var r1 = got.Count == 2 ? RefOf(got[1].Id) : null;
+                Verdict(got.Count == 2 && got[0].Text.Contains("HP") && got[1].Text.Contains("골드")
+                        && r0 is { Ref: 2, Flags: 0 } && r1 is { Ref: 3, Flags: 1 },
+                        $"QS-R2 PK 원인 1040({(goldFirst ? "골드→체력" : "체력→골드")}): 체력 줄은 PK 결과 기준 2로 먼저, 골드 줄은 자기 기준 3·결과 줄: "
+                        + $"[{Show(r0)}] [{Show(r1)}]");
+            }
+
+            {
+                var (lg, lines) = Start();
+                lg.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Frame.Msg(1, Frame.Cat(
+                    Frame.Fix64(1, 77),
+                    Frame.Msg(9, Frame.Cat(Frame.Fix64(1, Char), Frame.Varint(6, 0), Frame.Msg(10, Frame.Fix64(2, 1001)))),
+                    Frame.Msg(10, Frame.Cat(Frame.Fix64(1, Monster), Frame.Msg(10, Frame.Fix64(2, 5001)))))));
+                Dice(lg);
+                Dice(lg);
+                int before = lines.Count;
+                lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0),
+                           Frame.Cat(Frame.Fix64(1, Char), Frame.Msg(2, Frame.Cat(Frame.Varint(1, 7), Frame.Fix64(3, 0))),
+                                     PkEffect(999, hp: true, gold: false)));
+                bool held = lines.Count == before;
+                for (int i = 0; i < BattleLogger.DeferFrames + 1; i++) Dice(lg);
+                var late = lines.FindLast(l => l.Text.Contains("HP"));
+                var r = late.Text is null ? null : RefOf(late.Id);
+                Verdict(held && r is { Ref: 4, Flags: 1 }, $"QS-R3 대상 미상으로 보류된 1040은 나중에 나가도 기준 4, 결과 줄: held={held} {Show(r)}");
+            }
+
+            {
+                var (lg, lines) = Start();
+                lg.OnFrame(new FrameHeader(Op.GameRoundChange, 0, 0, 0), Frame.Varint(1, 1));
+                lg.OnFrame(new FrameHeader(Op.RoomShortChat, 0, 0, 0), Frame.Cat(Frame.Fix64(1, Char), Frame.Varint(2, 3)));
+                bool page = lines.Exists(l => l.Text == "<page 1>");
+                bool chat = lines.Exists(l => l.Text.Contains("빠른 대화"));
+                bool none = !tee.Records.Exists(e => e.GetProperty("type").GetString() == "queue-ref");
+                Verdict(page && chat && none, $"QS-R4 1라운드 페이지({page})와 방 짧은 채팅({chat})은 queue-ref가 없다");
+            }
+
+            {
+                var (lg, lines) = Start();
+                for (int i = 0; i < 4; i++) Dice(lg);
+                lg.OnFrame(new FrameHeader(Op.GameFinish, 0, 0, 0), Array.Empty<byte>());
+                lg.OnFrame(new FrameHeader(5004, 0, 0, 0), Array.Empty<byte>());
+                var sep = lines.FindLast(l => l.Text.Contains("게임 종료"));
+                var r = sep.Text is null ? null : RefOf(sep.Id);
+                Verdict(r is { Ref: 5, Flags: 0 }, $"QS-R5 게임 종료 구분선은 1016(도착 5)을 기준으로 한다: {Show(r)}");
+            }
+
+            {
+                var (lg, lines) = Start();
+                for (int i = 0; i < 5; i++) Dice(lg);
+                var inner = Frame.Cat(Frame.Fix64(1, Char), PkCause(), PkEffect(Monster, hp: true, gold: false));
+                lg.OnFrame(new FrameHeader(Op.HeroSkillMoveEffect, 0, 0, 0),
+                           Frame.Msg(2, Frame.Cat(Frame.Fix64(1, 1), Frame.Msg(2, Frame.Msg(1, inner)))));
+                var move = lines.FindLast(l => l.Text.Contains("HP"));
+                var r = move.Text is null ? null : RefOf(move.Id);
+                Verdict(r is { Ref: 6, Flags: 3 }, $"QS-R6 이동 효과(1096) 줄은 기준 6, 결과 줄이면서 열린 메시지: {Show(r)}");
+            }
+        }
+        finally
+        {
+            OverlaySchedule.ReplayPort.Swap(previous);
+            QueueTracker.ResetForTest();
+        }
+    }
+
     // docs/SIGNAL-GATING.md 6절 검증 계획
     static void RunScreenSignals(ManualLogSource log)
     {
@@ -1194,6 +1347,7 @@ static class Sched
 
         RunLoggerTags(log);
         RunPkSplit(log);
+        RunQueueRefs(log);
 
         Setup(log, signals: false);
         OverlaySchedule.Line("d", Dice, 1, 3, 3);

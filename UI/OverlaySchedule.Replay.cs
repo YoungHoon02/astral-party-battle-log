@@ -21,6 +21,7 @@ internal static partial class OverlaySchedule
     private enum Rec : byte
     {
         Header, Init, Tick, Item, Control, Signal, Env, PumpBegin, Take, SignalTake, Decision, Diagnostic, PumpEnd, Mark,
+        QueueRef,
     }
 
     private enum Act : byte { Schedule, Transfer, Resolve, Release, Drop }
@@ -41,7 +42,7 @@ internal static partial class OverlaySchedule
     private static readonly string[] RecNames =
     {
         "header", "init", "tick", "item", "control", "signal", "env", "pump-begin", "take", "signal-take",
-        "decision", "diagnostic", "pump-end", "mark",
+        "decision", "diagnostic", "pump-end", "mark", "queue-ref",
     };
     private static readonly string[] ItemSignalNames = { "line", "page", "clear", "sync", "advance" };
     private static readonly string[] ScreenNames = { "dice-face", "window", "hit", "round-tip", "top-tip" };
@@ -196,6 +197,11 @@ internal static partial class OverlaySchedule
     {
         Type = (byte)Rec.Item, A = item.Id, B = (long)item.Signal, C = (long)item.Kind, D = item.Group, E = item.Units,
         F = item.Detail, G = item.Round, H = item.ReceivedUs, I = Bits(item.Speed), J = item.Generation, K = parent,
+    });
+
+    private static void RecordQueueRef(in Item item) => Emit(new ReplayRecord
+    {
+        Type = (byte)Rec.QueueRef, A = item.Id, B = item.Ref, C = (item.Result ? 1 : 0) | (item.Opener ? 2 : 0),
     });
 
     // 포인터는 기록용 번호로 바꾼다. 같은 포인터는 끝까지 같은 번호다(재사용을 새 객체로 판정하지 않는다).
@@ -394,6 +400,11 @@ internal static partial class OverlaySchedule
                 break;
             case Rec.Mark:
                 Num(sb, "nowUs", r.A);
+                break;
+            case Rec.QueueRef:
+                Num(sb, "itemId", r.A);
+                Num(sb, "ref", r.B);
+                Num(sb, "flags", r.C);
                 break;
         }
         sb.Append('}');

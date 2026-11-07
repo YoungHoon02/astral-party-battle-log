@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using AstralPartyBattleLog.Log;
+using AstralPartyBattleLog.Net;
 using BepInEx.Logging;
 
 namespace AstralPartyBattleLog.UI;
@@ -32,10 +33,18 @@ internal static partial class OverlaySchedule
         public readonly long Id;
         // 파일 기록 대기 번호. 파일을 붙이지 않았거나 줄·라운드 구분선이 아니면 0이다.
         public readonly long FileKey;
+        // 이 줄이 기준으로 삼는 서버 메시지의 도착 번호. 기준이 없으면 -1이다.
+        public readonly long Ref;
+        // 기준 메시지가 결과를 보여 주는 종류(1040·1013·1096·5044)인지.
+        public readonly bool Result;
+        // 기준 메시지가 걷기 끝 기준을 따로 갖는 열린 메시지(5022·1096·5044)인지.
+        public readonly bool Opener;
 
         public Item(Signal signal, LineKind kind, long group, int units, long receivedUs, float speed,
-                    int generation, string? text, int round, int detail, long id, long fileKey = 0)
+                    int generation, string? text, int round, int detail, long id, long fileKey = 0,
+                    long reference = -1, bool result = false, bool opener = false)
         {
+            Ref = reference; Result = result; Opener = opener;
             Signal = signal; Kind = kind; Group = group; Units = units; ReceivedUs = receivedUs;
             Speed = speed; Generation = generation; Text = text; Round = round; Detail = detail; Id = id;
             FileKey = fileKey;
@@ -199,6 +208,15 @@ internal static partial class OverlaySchedule
                              int detail = 0, long parent = Null)
     {
         _touched = true;
+        long reference = -1;
+        bool result = false, opener = false;
+        // 1라운드 페이지는 전투 씬 로드 전에 와서 하한을 걸지 않는다.
+        if (group >= 0 && !(signal == Signal.Page && round == 1) && QueueTracker.TryRefOf(group, out reference, out int cmd))
+        {
+            result = cmd is 1040 or 1013 or 1096 or 5044;
+            opener = cmd is 5022 or 1096 or 5044;
+        }
+        else reference = -1;
         var item = new Item(signal, kind, group, units, Volatile.Read(ref _nowUs),
                             Volatile.Read(ref _speed), Volatile.Read(ref _generation),
                             text, round, detail, _recording ? Interlocked.Increment(ref _itemIds) : 0,
@@ -207,10 +225,14 @@ internal static partial class OverlaySchedule
                                 Signal.Line => HoldForFile(text!),
                                 Signal.Page => HoldForFile(LogFileWriter.RoundRule(round)),
                                 _ => 0,
-                            });
+                            }, reference, result, opener);
         if (signal == Signal.Page || signal == Signal.Line && kind is LineKind.Turn or LineKind.Dice or LineKind.Attack)
             ScheduleHealth.OnBattleInput(item.Generation);
-        if (_recording) RecordItem(item, parent);
+        if (_recording)
+        {
+            RecordItem(item, parent);
+            if (item.Ref >= 0) RecordQueueRef(item);
+        }
         Incoming.Enqueue(item);
     }
 
@@ -431,7 +453,8 @@ internal static partial class OverlaySchedule
         _lastTracedGroup = item.Group;
         TimingTrace.Write($"show kind={item.Kind.ToString().ToLowerInvariant()} "
                           + $"planned={(s.DueUs - item.ReceivedUs) / 1000}ms "
-                          + $"waited={(now - item.ReceivedUs) / 1000}ms speed={item.Speed:0.##}");
+                          + $"waited={(now - item.ReceivedUs) / 1000}ms speed={item.Speed:0.##} "
+                          + $"grp={item.Group} ref={(item.Ref >= 0 ? item.Ref.ToString() : "-")} why={WhyNames[(int)why]}");
     }
 
     // F10 표식. 화면 정확도의 독립 증거가 아니라 참고 표시다(docs/TIMING-REPLAY-HANDOFF.md 3절 6).

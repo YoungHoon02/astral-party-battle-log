@@ -345,7 +345,8 @@ internal static partial class OverlaySchedule
                 _ => GapKind.Budget,
             }, head.Gate.ToString().ToLowerInvariant(), head.Item.ReceivedUs, now);
         GateTrace($"release kind={head.Gate.ToString().ToLowerInvariant()} by={head.Res.ToString().ToLowerInvariant()} "
-                  + $"waited={(now - head.Item.ReceivedUs) / 1000}ms");
+                  + $"waited={(now - head.Item.ReceivedUs) / 1000}ms grp={head.Item.Group} "
+                  + $"ref={(head.Item.Ref >= 0 ? head.Item.Ref.ToString() : "-")} why={WhyNames[(int)head.Why]}");
 
         // PK 피해 줄은 PK 결과와 같은 그룹이라 함께 공개한다.
         while (Queue.Count > 0 && Queue[0].Gate == Gate.None && Queue[0].Item.Group >= 0

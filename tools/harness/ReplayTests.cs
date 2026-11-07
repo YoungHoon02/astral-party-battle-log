@@ -257,6 +257,11 @@ static class ReplayTests
               "RP4 Advance의 kind가 보존된다");
         Check(recs.Any(r => r.GetProperty("type").GetString() == "item" && r.GetProperty("detail").GetInt64() == 205),
               "RP4 다중 주사위 detail(5+2 → 205)이 보존된다");
+        var itemIds = recs.Where(r => r.GetProperty("type").GetString() == "item").Select(r => r.GetProperty("itemId").GetInt64()).ToHashSet();
+        var queueRefs = recs.Where(r => r.GetProperty("type").GetString() == "queue-ref").ToList();
+        Check(queueRefs.Count > 0 && queueRefs.All(q => itemIds.Contains(q.GetProperty("itemId").GetInt64()) && q.GetProperty("ref").GetInt64() >= 0)
+              && queueRefs.Any(q => q.GetProperty("flags").GetInt64() == 3),
+              "RP7 queue-ref 레코드가 기존 item에 붙고(기준 0 이상) 결과·열린 메시지 플래그가 남는다", $"{queueRefs.Count}건");
         bool gatedReleaseNoDue = recs.Where(r => r.GetProperty("type").GetString() == "decision"
                                                   && r.GetProperty("action").GetString() == "release"
                                                   && r.GetProperty("reason").GetString() == "own-signal")

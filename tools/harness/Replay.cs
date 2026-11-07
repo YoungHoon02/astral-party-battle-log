@@ -154,6 +154,9 @@ static class ReplayCheck
                     if (!items.Add(e.GetProperty("itemId").GetInt64())) Bad(r, "itemId 중복");
                     if (Opt(e, "parentControlId") is { } parent && !controls.Contains(parent)) Bad(r, "모르는 parentControlId");
                     break;
+                case "queue-ref":
+                    if (!items.Contains(e.GetProperty("itemId").GetInt64())) Bad(r, "모르는 itemId");
+                    break;
                 case "signal":
                     if (!signals.Add(e.GetProperty("signalId").GetInt64())) Bad(r, "signalId 중복");
                     break;
@@ -277,6 +280,11 @@ static class ReplayCheck
                         e.GetProperty("group").GetInt64(), (int)e.GetProperty("units").GetInt64(), (int)e.GetProperty("detail").GetInt64(),
                         (int)e.GetProperty("round").GetInt64(), e.GetProperty("receivedUs").GetInt64(),
                         (int)e.GetProperty("speedBits").GetInt64(), (int)e.GetProperty("gen").GetInt64());
+                    break;
+                case "queue-ref":
+                    long refItem = e.GetProperty("itemId").GetInt64();
+                    long flags = e.GetProperty("flags").GetInt64();
+                    items[refItem] = items[refItem] with { Ref = e.GetProperty("ref").GetInt64(), Result = (flags & 1) != 0, Opener = (flags & 2) != 0 };
                     break;
                 case "signal":
                     signals[e.GetProperty("signalId").GetInt64()] = new OverlaySchedule.SignalIn(
