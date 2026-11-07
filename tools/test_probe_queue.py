@@ -198,10 +198,10 @@ def test_immediate_frame_and_dash_ref_ignored():
 def test_truncated_lines_skipped():
     lines = [L(1, "queue head seq=1"), L(1, "queue head cmd=1"), L(1, "queue unmatched size=1"),
              L(1, "queue link seq=1 end=-"), L(1, "queue empty done="), L(1, "frame cmd= seq=1"),
-             head(2.0, 1, 7)]
+             L(1, "queue state= why=x"), head(2.0, 1, 7)]
     log = pq.parse(lines)
     assert len(log.heads) == 1 and not log.links and not log.unmatched and not log.empties
-    assert not log.frames
+    assert not log.frames and not log.states
 
 
 def test_messages_table_flag(tmp_path):

@@ -102,7 +102,10 @@ def _parse_queue(log, t, body, kv):
             return False
         log.unmatched.append((t, cmd))
     elif body.startswith("queue state="):
-        log.states.append((t, kv["state"], kv.get("why", "")))
+        state = kv.get("state")
+        if not state:
+            return False
+        log.states.append((t, state, kv.get("why", "")))
     elif body.startswith("queue link "):
         seq, end = _int(kv.get("seq")), _int(kv.get("end"))
         if seq is None or end is None:
@@ -328,7 +331,7 @@ def render(r, messages=False):
     out += ["", f"== 줄마다 (여유 {r.margin * 1000:.0f}ms) =="]
     out.append("처리 시작보다 이른 줄(show): "
                + (", ".join(f"{k} {len(v)}건 최대 {max(v):.2f}s" for k, v in sorted(r.early.items())) or "없음"))
-    out.append("화면 신호 게이트 [시작-여유, 끝+여유] 안/밖/판정불가: "
+    out.append("화면 신호 게이트 [시작-여유, 끝+여유] 안/밖/판정불가(보고만, 종료 코드에 넣지 않음): "
                + (", ".join(f"{k} {g['in']}/{g['out']}/{g['unknown']}" for k, g in sorted(r.gates.items())) or "없음"))
     out.append(f"결과 줄 (처리 끝 - show): {_dist(r.result_lag)}")
     out.append(f"queue-end 공개 결과 줄 (show - 처리 끝): {_dist(r.queue_end_result)}")
