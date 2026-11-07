@@ -85,10 +85,14 @@ internal static partial class OverlaySchedule
     // 신호 짝짓기 후보(규칙 2). 이번 펌프가 처리하는 신호는 모두 지난 펌프 뒤에 보였으므로, 처리 구간은 지난 펌프의
     // 경계로 판단한다. 이번 펌프의 경계를 쓰면 같은 프레임에서 신호 뒤에 시작한 메시지(약한 창이 닫히자마자
     // 시작한 다음 PK 등)에 짝지어 그 결과를 연출보다 먼저 낸다.
-    private static Fit SignalFit(Entry e)
+    // 라운드·차례 줄(orCurrent)은 이번 펌프의 경계로 처리 중이어도 받는다. 팁·배너는 그 메시지 처리기가 띄워 처리
+    // 시작과 같은 펌프 사이에 켜질 수 있고, 결과를 보여 주는 줄이 아니라 처리 시작에 내도 먼저 뜨지 않는다.
+    private static Fit SignalFit(Entry e, bool orCurrent = false)
     {
         if (!_queueActive || e.Item.Ref < 0) return Fit.Take;
-        if (EndOf(e.Item.Ref, e.Item.Opener) <= _qSignal.DoneThrough) return Fit.Skip;
-        return e.Item.Ref <= _qSignal.StartedThrough ? Fit.Take : Fit.Stop;
+        long end = EndOf(e.Item.Ref, e.Item.Opener);
+        if (end <= _qSignal.DoneThrough) return Fit.Skip;
+        if (e.Item.Ref <= _qSignal.StartedThrough) return Fit.Take;
+        return orCurrent && Started(e.Item.Ref) && !Ended(end) ? Fit.Take : Fit.Stop;
     }
 }

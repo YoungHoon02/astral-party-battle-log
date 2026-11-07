@@ -47,7 +47,7 @@ internal static partial class OverlaySchedule
         foreach (Entry e in Queue)
         {
             if (e.Gate != Gate.Round || e.Res != Resolution.None) continue;
-            Fit fit = SignalFit(e);
+            Fit fit = SignalFit(e, orCurrent: true);
             if (fit == Fit.Skip) continue;
             if (fit == Fit.Stop) break;
             if (e.Item.ReceivedUs < atUs) page = e;
@@ -111,7 +111,7 @@ internal static partial class OverlaySchedule
         foreach (Entry e in Queue)
         {
             if (e.Gate != Gate.Turn || e.Res != Resolution.None) continue;
-            Fit fit = SignalFit(e);
+            Fit fit = SignalFit(e, orCurrent: true);
             if (fit == Fit.Skip) continue;
             if (fit == Fit.Take && e.Item.ReceivedUs < atUs) turn = e;
             break;

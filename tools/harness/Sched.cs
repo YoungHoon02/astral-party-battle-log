@@ -719,7 +719,7 @@ static class Sched
         {
             Qs1(log); Qs2(log); Qs3(log); Qs4(log); Qs5(log); Qs6(log); Qs7(log); Qs8(log);
             Qs9(log); Qs10(log); Qs11(log); Qs12(log); Qs13(log); Qs14(log); Qs15(log);
-            Qs17(log); Qs18(log); Qs20(log);
+            Qs17(log); Qs18(log); Qs19(log); Qs20(log);
         });
     }
 
@@ -731,7 +731,7 @@ static class Sched
         {
             Qs1(log); Qs2(log); Qs3(log); Qs4(log); Qs5(log);
             Qs10(log); Qs11(log); Qs12(log); Qs13(log); Qs14(log);
-            Qs17(log); Qs18(log); Qs20(log);
+            Qs17(log); Qs18(log); Qs19(log); Qs20(log);
         });
         return _fail;
     }
@@ -1194,6 +1194,33 @@ static class Sched
         QMsg(1002);
         QHead(4);
         QExpect("QS18 타격이 없으면 다음 PK는 처리 끝에 낸다", "p1:queue-end");
+    }
+
+    static void Qs19(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(1);
+        long round = QMsg(1015);
+        QMsg(1002);
+        OverlaySchedule.Page(2, round);
+        QIds["<page 2>"] = _qTee!.LastItem;
+        QHead(1);
+        QExpect("QS19 라운드 페이지(도착 2)는 처리 전에는 내지 않는다");
+        Sig(ScreenSignal.RoundTip, true);
+        QHead(2);
+        QExpect("QS19 라운드 시작(1015)의 처리 시작과 팁 켜짐이 같은 펌프 사이에 오면 그 펌프에 낸다", "<page 2>:own-signal");
+
+        QStart(log);
+        LearnBanner();
+        QFill(1);
+        long turn = QMsg(1026);
+        QMsg(1002);
+        QLine("turn", LineKind.Turn, turn);
+        QHead(1);
+        QExpect("QS19 차례 줄(도착 2)은 처리 전에는 내지 않는다");
+        Sig(ScreenSignal.TopTip, true, instance: 7);
+        QHead(2);
+        QExpect("QS19 차례 시작(1026)의 처리 시작과 배너 켜짐이 같은 펌프 사이에 와도 그 펌프에 낸다", "turn:own-signal");
     }
 
     static void Qs20(ManualLogSource log)

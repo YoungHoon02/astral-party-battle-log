@@ -443,7 +443,7 @@ static class ReplayTests
         bool exercised = text.Contains("\"type\":\"queue\"") && text.Contains("\"type\":\"queue-link\"")
                          && text.Contains("\"reason\":\"queue-start\"") && text.Contains("\"reason\":\"queue-end\"");
         Check(recorded.Code == 0 && exercised && replay.Code == 0 && replay.Out.Contains("결정 일치"),
-              "QS16 대기열 규칙 시험(QS1~QS5·QS10~QS14·QS17·QS18·QS20)을 기록해 새 프로세스에서 재생하면 결정이 모두 같다",
+              "QS16 대기열 규칙 시험(QS1~QS5·QS10~QS14·QS17~QS20)을 기록해 새 프로세스에서 재생하면 결정이 모두 같다",
               $"시험 exit {recorded.Code}, 추적 기록 {(exercised ? "있음" : "없음")}, "
               + Regex.Match(replay.Out, "결정 [^\n]*").Value.Trim());
     }
