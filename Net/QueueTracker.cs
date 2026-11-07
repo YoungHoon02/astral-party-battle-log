@@ -7,6 +7,8 @@ namespace AstralPartyBattleLog.Net;
 
 internal enum QueueRead : byte { Unreadable, Empty, Head }
 
+internal enum QueueMode : byte { Off, Live, Frozen }
+
 internal readonly struct QueueObservation
 {
     public readonly QueueRead Kind;
@@ -27,19 +29,15 @@ internal readonly struct QueueObservation
 
 internal readonly struct QueueSnapshot
 {
-    public readonly bool Live;
+    public readonly QueueMode Mode;
     public readonly long StartedThrough;
     public readonly long DoneThrough;
-    public readonly long LastDrained;
-    public readonly long OpenDice;
 
-    public QueueSnapshot(bool live, long started, long done, long lastDrained, long openDice)
+    public QueueSnapshot(QueueMode mode, long started, long done)
     {
-        Live = live;
+        Mode = mode;
         StartedThrough = started;
         DoneThrough = done;
-        LastDrained = lastDrained;
-        OpenDice = openDice;
     }
 }
 
@@ -47,22 +45,25 @@ internal readonly struct QueueHealth
 {
     public long Frames { get; init; }
     public long LiveFrames { get; init; }
+    public long FrozenFrames { get; init; }
     public long Matched { get; init; }
     public long Unmatched { get; init; }
-    public long SuspendReconnect { get; init; }
-    public long SuspendSocket { get; init; }
-    public long SuspendUnmatched { get; init; }
     public long Unreadable { get; init; }
     public long Overflow { get; init; }
-    public int MaxSize { get; init; }
-    public int MaxWaitFrames { get; init; }
+    public long FreezeUnmatched { get; init; }
+    public long FreezeUnreadable { get; init; }
+    public long FreezeReconnect { get; init; }
+    public long FreezeExit { get; init; }
+    public long FreezeError { get; init; }
+    public long FreezeSocket { get; init; }
+    public int Size { get; init; }
+    public int HeadWaitTicks { get; init; }
 }
 
-// 게임이 서버 메시지를 대기열 맨 앞부터 처리한다는 사실로, 받은 메시지마다 "처리 시작/끝"을 도착 번호로 알려 준다.
-// Unity·IL2CPP에 의존하지 않는다(하네스에 링크된다).
 internal static class QueueTracker
 {
-    public const int EmptyMarginFrames = 3;
+    public const int EmptyTicksToResume = 6;
+    public const int ArrivalMarginTicks = 3;
     public const int MaxPending = 4096;
     private const int MaxGroups = 8192;
 
@@ -71,70 +72,98 @@ internal static class QueueTracker
         public readonly long Num;
         public readonly int Cmd;
         public readonly long Down;
-        public readonly int Frame;
+        public readonly int Tick;
 
-        public Arrival(long num, int cmd, long down, int frame)
+        public Arrival(long num, int cmd, long down, int tick)
         {
             Num = num;
             Cmd = cmd;
             Down = down;
-            Frame = frame;
+            Tick = tick;
         }
     }
 
     private static readonly object Gate = new();
     private static readonly object GroupGate = new();
 
+    // Gate로 보호: IO 스레드(Arrive, SocketDropped)와 메인 스레드가 함께 만진다.
     private static bool _enabled;
     private static bool _disabled;
-    private static bool _live;
-    private static int _frame;
-
+    private static QueueMode _mode;
+    private static long _pubStarted;
+    private static long _pubDone;
     private static long _nextNum;
     private static List<Arrival> _intake = new();
     private static List<Arrival> _swap = new();
-    private static bool _resyncPending;
-    private static long _resyncPoint;
-    private static long _suspendReconnect;
-    private static long _suspendSocket;
+    private static bool _awaitSync;
+    private static bool _reconnectPending;
+    private static long _reference;
+    private static bool _clearRequested;
+    private static long _freezeUnmatched, _freezeUnreadable, _freezeReconnect, _freezeExit, _freezeError, _freezeSocket;
 
+    private static int _tick;
+    private static int _frame;
+
+    // 아래는 메인 스레드 전용이다. Apply·BeginFrame·DrainLinks·Snapshot 밖에서 만지지 않는다.
     private static readonly List<Arrival> Pending = new();
     private static long _started;
     private static long _done;
-    private static long _lastDrained;
-    private static long _openDice;
-    private static readonly List<(long Dice, long End)> Links = new();
+    private static int _emptyRun;
+    private static readonly List<long> Open = new();
+    private static readonly List<(long Opener, long End)> Links = new();
 
-    private static long _frames, _liveFrames, _matched, _unmatched, _suspendUnmatched, _unreadable, _overflow;
-    private static int _maxSize, _maxWait;
+    private static long _frames, _liveFrames, _frozenFrames, _matched, _unmatched, _unreadable, _overflow;
+    private static int _size;
+    private static long _headNum;
+    private static int _headWait;
     private static (int Cmd, long Down) _lastHead;
     private static bool _hasLastHead;
     private static (int Cmd, long Down) _lastUnmatched;
     private static bool _hasLastUnmatched;
 
-    private static readonly Dictionary<long, (long Arrival, int Cmd, long Seq)> Groups = new();
-    private static readonly Queue<(long Group, long Seq)> GroupOrder = new();
-    private static long _groupSeq;
+    private static readonly Dictionary<long, (long Arrival, int Cmd)> Groups = new();
+    private static readonly Queue<long> GroupOrder = new();
 
     public static bool Enabled => Volatile.Read(ref _enabled);
 
+    internal static int GroupOrderLength
+    {
+        get { lock (GroupGate) return GroupOrder.Count; }
+    }
+
     public static void Configure(bool enabled)
     {
+        bool changed = false;
         lock (Gate)
         {
             _enabled = enabled && !_disabled;
-            if (!_enabled) SetLive(false, "off");
+            if (!_enabled)
+            {
+                changed = TurnOff();
+            }
         }
+        if (changed) TraceState(QueueMode.Off, "config");
     }
 
     public static void Disable(string reason)
     {
+        bool changed;
         lock (Gate)
         {
             _disabled = true;
             _enabled = false;
-            SetLive(false, "disabled:" + reason);
+            changed = TurnOff();
         }
+        if (changed) TraceState(QueueMode.Off, "disabled:" + reason);
+    }
+
+    private static bool TurnOff()
+    {
+        _intake.Clear();
+        _clearRequested = true;
+        _awaitSync = false;
+        _reconnectPending = false;
+        return Switch(QueueMode.Off);
     }
 
     private static bool IsImmediate(int cmd) => cmd switch
@@ -143,65 +172,106 @@ internal static class QueueTracker
         _ => false,
     };
 
-    private static bool IsDiceBoundary(int cmd) => cmd switch
+    private static bool IsBoundary(int cmd) => cmd switch
     {
         5022 or 1026 or 1007 or 1117 or 1015 or 1016 => true,
         _ => false,
     };
 
-    public static long Arrive(int cmd, long down)
+    private static bool IsOpener(int cmd) => cmd switch
+    {
+        5022 or 1096 or 5044 => true,
+        _ => false,
+    };
+
+    public static long Arrive(int cmd, long down, int err = 0)
     {
         if (!Enabled) return -1;
-        if (cmd == 5008)
-        {
-            Trigger("reconnect");
-            return -1;
-        }
-        if (IsImmediate(cmd)) return -1;
-        int frame = Volatile.Read(ref _frame);
+        int tick = Volatile.Read(ref _tick);
+        long num = -1;
+        string? why = null;
+        bool changed = false;
         lock (Gate)
         {
-            long num = ++_nextNum;
-            _intake.Add(new Arrival(num, cmd, down, frame));
-            return num;
+            if (!IsImmediate(cmd))
+            {
+                num = ++_nextNum;
+                _intake.Add(new Arrival(num, cmd, down, tick));
+            }
+            if (cmd == 5008)
+            {
+                _awaitSync = false;
+                why = "reconnect";
+            }
+            else if (cmd == 5012) why = "exit";
+            else if (err != 0) why = "error";
+            if (why != null) changed = Signal(why, raiseReference: true);
         }
+        if (changed) TraceState(QueueMode.Frozen, why!);
+        return num;
     }
 
     public static void SocketDropped()
     {
-        if (Enabled) Trigger("socket");
-    }
-
-    // 재연결 동안 게임은 받은 메시지를 대기열 밖에 모았다가 나중에 한꺼번에 넣는다.
-    // 그 사이 빈 목록을 끝으로 오해하지 않도록, 신호 뒤에 도착한 항목과 맞을 때까지 규칙을 멈춘다.
-    private static void Trigger(string why)
-    {
+        if (!Enabled) return;
+        bool changed;
         lock (Gate)
         {
-            _resyncPending = true;
-            _resyncPoint = _nextNum;
-            SetLive(false, why);
+            // 재연결 중에는 게임이 방 상태를 NONE으로 두고 전투 메시지를 화면 없이 흘려보내므로(OnlineLogic.cs:371),
+            // 다음 5008이 와서 기준점이 정해질 때까지 어떤 항목도 풀어 주지 않는다.
+            _awaitSync = true;
+            changed = Signal("socket", raiseReference: false);
         }
+        if (changed) TraceState(QueueMode.Frozen, "socket");
+    }
+
+    private static bool Signal(string why, bool raiseReference)
+    {
+        if (raiseReference && _nextNum > _reference) _reference = _nextNum;
+        _reconnectPending = true;
+        if (_mode == QueueMode.Off) return false;
+        switch (why)
+        {
+            case "reconnect": _freezeReconnect++; break;
+            case "exit": _freezeExit++; break;
+            case "error": _freezeError++; break;
+            case "socket": _freezeSocket++; break;
+        }
+        return Switch(QueueMode.Frozen);
+    }
+
+    private static bool Switch(QueueMode to)
+    {
+        if (to == QueueMode.Frozen && _mode == QueueMode.Off) return false;
+        if (_mode == to) return false;
+        _mode = to;
+        if (to == QueueMode.Live)
+        {
+            _pubStarted = _started;
+            _pubDone = _done;
+        }
+        return true;
+    }
+
+    private static void TraceState(QueueMode mode, string why)
+    {
+        if (!TimingTrace.Enabled) return;
+        string name = mode switch { QueueMode.Live => "live", QueueMode.Frozen => "frozen", _ => "off" };
+        TimingTrace.Write($"queue state={name} why={why} f={Volatile.Read(ref _frame)}");
     }
 
     public static void NoteGroup(long group, long arrival, int cmd)
     {
         lock (GroupGate)
         {
-            long seq = ++_groupSeq;
-            Groups[group] = (arrival, cmd, seq);
-            GroupOrder.Enqueue((group, seq));
+            bool known = Groups.ContainsKey(group);
+            Groups[group] = (arrival, cmd);
+            if (known) return;
+            GroupOrder.Enqueue(group);
             if (Groups.Count <= MaxGroups) return;
             int drop = Groups.Count / 2;
-            while (drop > 0 && GroupOrder.Count > 0)
-            {
-                var (g, s) = GroupOrder.Dequeue();
-                if (Groups.TryGetValue(g, out var v) && v.Seq == s)
-                {
-                    Groups.Remove(g);
-                    drop--;
-                }
-            }
+            while (drop-- > 0 && GroupOrder.Count > 0)
+                Groups.Remove(GroupOrder.Dequeue());
         }
     }
 
@@ -221,11 +291,18 @@ internal static class QueueTracker
         return false;
     }
 
-    public static void BeginFrame(int frame) => Volatile.Write(ref _frame, frame);
+    public static void BeginFrame(int unityFrame)
+    {
+        Volatile.Write(ref _tick, _tick + 1);
+        Volatile.Write(ref _frame, unityFrame);
+    }
 
-    public static QueueSnapshot Snapshot() => new(Volatile.Read(ref _live), _started, _done, _lastDrained, _openDice);
+    public static QueueSnapshot Snapshot()
+    {
+        lock (Gate) return new QueueSnapshot(_mode, _pubStarted, _pubDone);
+    }
 
-    public static int DrainLinks(List<(long Dice, long End)> into)
+    public static int DrainLinks(List<(long Opener, long End)> into)
     {
         int n = Links.Count;
         if (n == 0) return 0;
@@ -238,21 +315,26 @@ internal static class QueueTracker
     {
         get
         {
+            // 멈춤 사유 수는 IO 스레드도 올리므로 잠금 안에서 읽고, 나머지는 메인 스레드 전용이다.
             lock (Gate)
             {
                 return new QueueHealth
                 {
                     Frames = _frames,
                     LiveFrames = _liveFrames,
+                    FrozenFrames = _frozenFrames,
                     Matched = _matched,
                     Unmatched = _unmatched,
-                    SuspendReconnect = _suspendReconnect,
-                    SuspendSocket = _suspendSocket,
-                    SuspendUnmatched = _suspendUnmatched,
                     Unreadable = _unreadable,
                     Overflow = _overflow,
-                    MaxSize = _maxSize,
-                    MaxWaitFrames = _maxWait,
+                    FreezeUnmatched = _freezeUnmatched,
+                    FreezeUnreadable = _freezeUnreadable,
+                    FreezeReconnect = _freezeReconnect,
+                    FreezeExit = _freezeExit,
+                    FreezeError = _freezeError,
+                    FreezeSocket = _freezeSocket,
+                    Size = _size,
+                    HeadWaitTicks = _headWait,
                 };
             }
         }
@@ -261,54 +343,59 @@ internal static class QueueTracker
     public static void Apply(in QueueObservation obs)
     {
         if (!Enabled) return;
+        int tick = Volatile.Read(ref _tick);
         int frame = Volatile.Read(ref _frame);
         _frames++;
-        if (obs.Size > _maxSize) _maxSize = obs.Size;
+        _size = obs.Kind == QueueRead.Head ? obs.Size : 0;
 
-        Drain();
+        Drain(frame);
 
         switch (obs.Kind)
         {
             case QueueRead.Unreadable:
-                _unreadable++;
-                SetLive(false, "unreadable", frame);
+                OnUnreadable();
                 break;
             case QueueRead.Empty:
-                OnEmpty(frame);
+                OnEmpty(tick, frame);
                 break;
             default:
-                OnHead(obs, frame);
+                OnHead(obs, tick, frame);
                 break;
         }
 
-        if (Volatile.Read(ref _live)) _liveFrames++;
-    }
-
-    private static void Drain()
-    {
         lock (Gate)
         {
+            if (_mode == QueueMode.Live)
+            {
+                _pubStarted = _started;
+                _pubDone = _done;
+                _liveFrames++;
+            }
+            else if (_mode == QueueMode.Frozen) _frozenFrames++;
+        }
+    }
+
+    private static void Drain(int frame)
+    {
+        bool clear;
+        lock (Gate)
+        {
+            clear = _clearRequested;
+            _clearRequested = false;
             (_intake, _swap) = (_swap, _intake);
         }
+        if (clear) ClearInternal();
+
         foreach (var a in _swap)
         {
-            // 방 속도 2에서는 몬스터 주사위 연출을 건너뛰어 눈이 걷기로만 드러나므로, 주사위 줄의 끝은 뒤따르는 걷기의 끝이다.
-            if (_openDice != 0)
+            // 방 속도 2에서는 몬스터 주사위 연출을 건너뛰어 눈이 걷기로만 드러나므로, 열린 메시지의 끝은 뒤따르는 걷기의 끝이다.
+            if (Open.Count > 0)
             {
-                if (a.Cmd == 5028)
-                {
-                    Links.Add((_openDice, a.Num));
-                    _openDice = 0;
-                }
-                else if (IsDiceBoundary(a.Cmd))
-                {
-                    Links.Add((_openDice, _openDice));
-                    _openDice = 0;
-                }
+                if (a.Cmd == 5028) CloseAll(a.Num, frame);
+                else if (IsBoundary(a.Cmd)) CloseAll(-1, frame);
             }
-            if (a.Cmd == 5022) _openDice = a.Num;
+            if (IsOpener(a.Cmd)) Open.Add(a.Num);
             Pending.Add(a);
-            _lastDrained = a.Num;
         }
         _swap.Clear();
 
@@ -316,54 +403,97 @@ internal static class QueueTracker
         {
             int drop = Pending.Count - MaxPending;
             _overflow += drop;
-            Finish(drop, CurrentFrame());
+            Finish(drop);
         }
     }
 
-    private static int CurrentFrame() => Volatile.Read(ref _frame);
+    private static void CloseAll(long end, int frame)
+    {
+        foreach (long opener in Open)
+        {
+            long e = end >= 0 ? end : opener;
+            Links.Add((opener, e));
+            if (TimingTrace.Enabled) TimingTrace.Write($"queue link seq={opener} end={e} f={frame}");
+        }
+        Open.Clear();
+    }
 
-    // 앞 count개를 끝난 것으로 치고 목록에서 뺀다. 아직 시작으로 안 친 항목의 대기 프레임도 여기서 잰다.
-    private static void Finish(int count, int frame)
+    private static void ClearInternal()
+    {
+        Pending.Clear();
+        Open.Clear();
+        _emptyRun = 0;
+        _headNum = 0;
+        _headWait = 0;
+        _hasLastHead = false;
+        _hasLastUnmatched = false;
+    }
+
+    private static void Finish(int count)
     {
         if (count <= 0) return;
         long last = Pending[count - 1].Num;
-        MarkStarted(last, frame);
+        if (last > _started) _started = last;
         if (last > _done) _done = last;
         Pending.RemoveRange(0, count);
     }
 
-    private static void MarkStarted(long through, int frame)
+    private static void Freeze(string why)
     {
-        if (through <= _started) return;
-        foreach (var e in Pending)
-        {
-            if (e.Num > through) break;
-            if (e.Num <= _started) continue;
-            int wait = frame - e.Frame;
-            if (wait > _maxWait) _maxWait = wait;
-        }
-        _started = through;
-    }
-
-    private static void OnEmpty(int frame)
-    {
-        _hasLastHead = false;
-        _hasLastUnmatched = false;
-        int n = 0;
-        while (n < Pending.Count && frame - Pending[n].Frame >= EmptyMarginFrames) n++;
-        if (n > 0)
-        {
-            Finish(n, frame);
-            if (TimingTrace.Enabled) TimingTrace.Write($"queue empty done={_done} f={frame}");
-        }
+        bool changed;
         lock (Gate)
         {
-            if (!_resyncPending) SetLive(true, "empty", frame);
+            if (_mode == QueueMode.Live)
+            {
+                if (why == "unmatched") _freezeUnmatched++;
+                else _freezeUnreadable++;
+            }
+            changed = Switch(QueueMode.Frozen);
         }
+        if (changed) TraceState(QueueMode.Frozen, why);
     }
 
-    private static void OnHead(in QueueObservation obs, int frame)
+    private static void ResetHead()
     {
+        _headNum = 0;
+        _headWait = 0;
+        _hasLastHead = false;
+    }
+
+    private static void OnUnreadable()
+    {
+        _unreadable++;
+        _emptyRun = 0;
+        ResetHead();
+        _hasLastUnmatched = false;
+        Freeze("unreadable");
+    }
+
+    private static void OnEmpty(int tick, int frame)
+    {
+        ResetHead();
+        _hasLastUnmatched = false;
+        if (++_emptyRun < EmptyTicksToResume) return;
+
+        int n = 0;
+        while (n < Pending.Count && tick - Pending[n].Tick >= ArrivalMarginTicks) n++;
+        if (n > 0)
+        {
+            Finish(n);
+            if (TimingTrace.Enabled) TimingTrace.Write($"queue empty done={_done} f={frame}");
+        }
+
+        bool changed;
+        lock (Gate)
+        {
+            changed = !_reconnectPending && Switch(QueueMode.Live);
+        }
+        if (changed) TraceState(QueueMode.Live, "empty");
+    }
+
+    private static void OnHead(in QueueObservation obs, int tick, int frame)
+    {
+        _emptyRun = 0;
         int idx = -1;
         for (int i = 0; i < Pending.Count; i++)
         {
@@ -381,8 +511,8 @@ internal static class QueueTracker
                 TimingTrace.Write($"queue unmatched cmd={obs.Cmd} down={obs.Down} size={obs.Size} f={frame}");
             _lastUnmatched = (obs.Cmd, obs.Down);
             _hasLastUnmatched = true;
-            _hasLastHead = false;
-            SetLive(false, "unmatched", frame);
+            ResetHead();
+            Freeze("unmatched");
             return;
         }
 
@@ -393,36 +523,26 @@ internal static class QueueTracker
             TimingTrace.Write($"queue head seq={head.Num} cmd={obs.Cmd} down={obs.Down} size={obs.Size} f={frame}");
         _lastHead = (obs.Cmd, obs.Down);
         _hasLastHead = true;
-
-        Finish(idx, frame);
-        MarkStarted(head.Num, frame);
-
-        lock (Gate)
+        if (_headNum != head.Num)
         {
-            if (_resyncPending && head.Num <= _resyncPoint) return;
-            _resyncPending = false;
-            SetLive(true, "match", frame);
+            _headNum = head.Num;
+            _headWait = tick - head.Tick;
         }
-    }
 
-    private static void SetLive(bool live, string why, int frame = -1)
-    {
+        Finish(idx);
+        if (head.Num > _started) _started = head.Num;
+
+        bool changed;
         lock (Gate)
         {
-            if (_live == live) return;
-            Volatile.Write(ref _live, live);
-            if (!live)
+            if (_reconnectPending)
             {
-                switch (why)
-                {
-                    case "reconnect": _suspendReconnect++; break;
-                    case "socket": _suspendSocket++; break;
-                    case "unmatched": _suspendUnmatched++; break;
-                }
+                if (_awaitSync || head.Num <= _reference) return;
+                _reconnectPending = false;
             }
-            if (TimingTrace.Enabled)
-                TimingTrace.Write($"queue live={(live ? 1 : 0)} why={why} f={(frame >= 0 ? frame : CurrentFrame())}");
+            changed = Switch(QueueMode.Live);
         }
+        if (changed) TraceState(QueueMode.Live, "match");
     }
 
     internal static void ResetForTest()
@@ -431,24 +551,29 @@ internal static class QueueTracker
         {
             _enabled = false;
             _disabled = false;
-            _live = false;
-            _frame = 0;
+            _mode = QueueMode.Off;
+            _pubStarted = 0;
+            _pubDone = 0;
             _nextNum = 0;
             _intake.Clear();
             _swap.Clear();
-            _resyncPending = false;
-            _resyncPoint = 0;
-            _suspendReconnect = 0;
-            _suspendSocket = 0;
+            _awaitSync = false;
+            _reconnectPending = false;
+            _reference = 0;
+            _clearRequested = false;
+            _freezeUnmatched = _freezeUnreadable = _freezeReconnect = _freezeExit = _freezeError = _freezeSocket = 0;
+            _tick = 0;
+            _frame = 0;
             Pending.Clear();
             _started = 0;
             _done = 0;
-            _lastDrained = 0;
-            _openDice = 0;
+            Open.Clear();
             Links.Clear();
-            _frames = _liveFrames = _matched = _unmatched = _suspendUnmatched = _unreadable = _overflow = 0;
-            _maxSize = 0;
-            _maxWait = 0;
+            _emptyRun = 0;
+            _frames = _liveFrames = _frozenFrames = _matched = _unmatched = _unreadable = _overflow = 0;
+            _size = 0;
+            _headNum = 0;
+            _headWait = 0;
             _hasLastHead = false;
             _hasLastUnmatched = false;
         }
@@ -456,7 +581,6 @@ internal static class QueueTracker
         {
             Groups.Clear();
             GroupOrder.Clear();
-            _groupSeq = 0;
         }
     }
 }
