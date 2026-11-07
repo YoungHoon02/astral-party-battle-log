@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using BepInEx.Logging;
 using Il2CppInterop.Runtime;
 using Il2CppInterop.Runtime.Runtime;
+using Il2CppInterop.Runtime.Runtime.VersionSpecific.Class;
 
 namespace AstralPartyBattleLog.Net;
 
@@ -36,14 +37,16 @@ internal static unsafe class QueueReader
 
     private static IntPtr _netManager, _rpcClass, _listClass, _dataClass;
     private static IntPtr _instField, _owner;
+    private static INativeClassStruct? _ownerStruct;
     private static bool _ownerReady;
     private static int _rpcOffset, _listOffset, _itemsOffset, _sizeOffset, _cmdOffset, _downOffset;
     private static IntPtr _seenInst, _seenRpc, _seenList, _seenElem;
 
     public static string State => _phase switch
     {
-        Phase.Ready => "ready",
         Phase.Disabled => "disabled:" + _reason,
+        _ when !QueueTracker.Enabled => "disabled:config",
+        Phase.Ready => "ready",
         _ => "resolving",
     };
 
@@ -51,11 +54,12 @@ internal static unsafe class QueueReader
 
     public static void Disable(string reason)
     {
+        bool running = QueueTracker.Enabled;
         QueueTracker.Disable(reason);
         if (_phase == Phase.Disabled) return;
         _phase = Phase.Disabled;
         _reason = reason;
-        _log?.LogWarning($"[queue] 대기열 읽기를 이번 실행 동안 끈다: {reason}");
+        if (running) _log?.LogWarning($"[queue] 대기열 읽기를 이번 실행 동안 끈다: {reason}");
     }
 
     public static QueueObservation Read()
@@ -67,7 +71,7 @@ internal static unsafe class QueueReader
         // 초기화를 직접 부르면 정적 생성자, 곧 게임 코드가 돈다.
         if (!_ownerReady)
         {
-            if (!UnityVersionHandler.Wrap((Il2CppClass*)_owner).InitializedAndNoError) return QueueObservation.Unreadable;
+            if (_ownerStruct is not { InitializedAndNoError: true }) return QueueObservation.Unreadable;
             _ownerReady = true;
         }
 
@@ -91,8 +95,8 @@ internal static unsafe class QueueReader
         return new QueueObservation(QueueRead.Head, *(int*)(elem + _cmdOffset), *(long*)(elem + _downOffset), size);
     }
 
-    // 필드가 들고 있는 동안 객체는 살아 있으므로 주소가 같으면 같은 객체다. 그래서 주소가 바뀔 때만 클래스를 비교한다.
-    // 클래스 비교는 레이아웃이 바뀐 것을 알아챌 뿐, 잘못된 포인터를 막아 주지는 못한다.
+    // 선언 타입을 메타데이터로 확인한 필드라 그 자리에는 그 타입의 객체만 들어간다. 같은 주소에 다른 객체가 다시 들어와도
+    // 타입은 같으므로, 레이아웃이 바뀐 것을 알아채는 클래스 비교는 주소가 바뀔 때만 한다. 잘못된 포인터를 막아 주지는 못한다.
     private static bool Verified(IntPtr obj, IntPtr klass, ref IntPtr seen)
     {
         if (obj == IntPtr.Zero) return false;
@@ -116,12 +120,14 @@ internal static unsafe class QueueReader
             return false;
         }
 
+        _ownerStruct = UnityVersionHandler.Wrap((Il2CppClass*)_owner);
         _phase = Phase.Ready;
         _log?.LogInfo($"[queue] 대기열 읽기 준비 완료 (RPC +0x{_rpcOffset:X}, _OnPushRPCMsg +0x{_listOffset:X}, "
                       + $"_items +0x{_itemsOffset:X}, _size +0x{_sizeOffset:X}, CMDID +0x{_cmdOffset:X}, DOWNSN +0x{_downOffset:X})");
         return true;
     }
 
+    // 세 클래스는 같은 핫업데이트 어셈블리에 있다. NetManager가 있는 이미지에 나머지가 없으면 이름이 바뀐 것이라 끈다.
     private static bool FindClasses()
     {
         // Il2CppInterop은 개수 인자를 uint로 선언했지만 네이티브 함수는 size_t(8바이트)를 쓴다. 8바이트 자리를 넘겨 스택을 덮지 않게 한다.
@@ -129,21 +135,31 @@ internal static unsafe class QueueReader
         IntPtr* assemblies = IL2CPP.il2cpp_domain_get_assemblies(IL2CPP.il2cpp_domain_get(), ref Unsafe.As<ulong, uint>(ref count));
         if (assemblies == null) return false;
 
-        IntPtr net = IntPtr.Zero, rpc = IntPtr.Zero, data = IntPtr.Zero;
-        for (ulong i = 0; i < count && (net == IntPtr.Zero || rpc == IntPtr.Zero || data == IntPtr.Zero); i++)
+        string? missing = null;
+        for (ulong i = 0; i < count; i++)
         {
-            IntPtr image = IL2CPP.il2cpp_assembly_get_image(assemblies[i]);
+            IntPtr assembly = assemblies[i];
+            if (assembly == IntPtr.Zero) continue;
+            IntPtr image = IL2CPP.il2cpp_assembly_get_image(assembly);
             if (image == IntPtr.Zero) continue;
-            if (net == IntPtr.Zero) net = IL2CPP.il2cpp_class_from_name(image, "Core.Net", "NetManager");
-            if (rpc == IntPtr.Zero) rpc = IL2CPP.il2cpp_class_from_name(image, "Core.Net", "RPCMsgManager");
-            if (data == IntPtr.Zero) data = IL2CPP.il2cpp_class_from_name(image, "Core.Net", "OnPushRPCMsgData");
-        }
-        if (net == IntPtr.Zero || rpc == IntPtr.Zero || data == IntPtr.Zero) return false;
+            IntPtr net = IL2CPP.il2cpp_class_from_name(image, "Core.Net", "NetManager");
+            if (net == IntPtr.Zero) continue;
+            IntPtr rpc = IL2CPP.il2cpp_class_from_name(image, "Core.Net", "RPCMsgManager");
+            IntPtr data = IL2CPP.il2cpp_class_from_name(image, "Core.Net", "OnPushRPCMsgData");
+            if (rpc == IntPtr.Zero || data == IntPtr.Zero)
+            {
+                missing ??= rpc == IntPtr.Zero ? "RPCMsgManager" : "OnPushRPCMsgData";
+                continue;
+            }
 
-        _netManager = net;
-        _rpcClass = rpc;
-        _dataClass = data;
-        return true;
+            _netManager = net;
+            _rpcClass = rpc;
+            _dataClass = data;
+            return true;
+        }
+
+        if (missing is not null) Disable("layout:class:" + missing);
+        return false;
     }
 
     // 클래스는 있는데 필드가 없거나 타입이 다르면 게임이 바뀐 것이라 이번 실행 동안 끈다.
@@ -155,12 +171,14 @@ internal static unsafe class QueueReader
             || IL2CPP.il2cpp_class_from_type(type) != _rpcClass)
             return "RPC";
 
+        // 목록과 원소는 참조 형식이어야 한다. 값 형식이면 그 자리에 객체 주소가 아니라 값이 그대로 들어 있어, 주소로 따라가면 AV가 난다.
         if (!InstanceField(_rpcClass, "_OnPushRPCMsg", TypeGenericInst, out type, out _listOffset)) return "_OnPushRPCMsg";
         _listClass = IL2CPP.il2cpp_class_from_type(type);
         if (_listClass == IntPtr.Zero || IL2CPP.il2cpp_class_is_valuetype(_listClass)) return "_OnPushRPCMsg";
 
         if (!InstanceField(_listClass, "_items", TypeSzArray, out type, out _itemsOffset)
-            || IL2CPP.il2cpp_type_get_class_or_element_class(type) != _dataClass)
+            || IL2CPP.il2cpp_type_get_class_or_element_class(type) != _dataClass
+            || IL2CPP.il2cpp_class_is_valuetype(_dataClass))
             return "_items";
         if (!InstanceField(_listClass, "_size", TypeI4, out _, out _sizeOffset)) return "_size";
 

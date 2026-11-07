@@ -142,9 +142,9 @@ public class Plugin : BasePlugin
             "게임이 메시지를 처리하는 순서(대기열)를 읽어, 줄을 게임이 그 장면을 처리하기 시작한 뒤에 보여 준다. " +
             "결과(체력·골드·버프) 줄은 처리가 끝난 뒤에 보여 준다. 대기열을 못 읽으면 연출 길이 추정으로 돌아간다. " +
             "SyncWithAnimation이 켜져 있어야 공개 시점에 쓰인다.");
-        // 소켓 후킹이 걸리기 전에 켜야 첫 프레임부터 도착 번호가 매겨진다.
+        // 공개 시점에 쓸 곳이 없으면 게임 메모리를 읽지 않는다. 소켓 후킹이 걸리기 전에 켜야 첫 프레임부터 도착 번호가 매겨진다.
         QueueReader.Init(Log);
-        QueueTracker.Configure(queueSync.Value);
+        QueueTracker.Configure(queueSync.Value && showOverlay.Value && syncAnimation.Value);
         ConfigEntry<bool> traceTiming = Config.Bind(
             "Diagnostics", "TraceTiming", false,
             "화면 지연을 재기 위한 기록(수신 프레임 헤더, PK 진행, 표시 시각)을 BepInEx 로그에 남긴다. " +

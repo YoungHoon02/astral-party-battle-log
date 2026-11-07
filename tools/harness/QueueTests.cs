@@ -10,6 +10,14 @@ static class QueueTests
     static int _fail;
     static int _unity;
 
+    // BepInEx 6의 보간 문자열 LogInfo는 등록된 리스너가 그 수준을 듣지 않으면 문자열을 만들지도 않는다.
+    sealed class LevelListener : ILogListener
+    {
+        public LogLevel LogLevelFilter => LogLevel.All;
+        public void LogEvent(object sender, LogEventArgs eventArgs) { }
+        public void Dispose() { }
+    }
+
     static void Check(bool ok, string label, string? detail = null)
     {
         Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} {label}{(detail is null ? "" : $": {detail}")}");
@@ -367,6 +375,36 @@ static class QueueTests
         var wsnap = QueueTracker.Snapshot();
         Check(lq1 && lq2 && lq3 && lq4 && wsnap.Mode == QueueMode.Live && wsnap.StartedThrough == 2 && wsnap.DoneThrough == 1,
               "QT24 로거는 본문 전에 돌아가는 프레임도 도착 번호를 받아 그룹에 남긴다", $"{lq1}/{lq2}/{lq3}/{lq4} {Show(wsnap)}");
+
+        // 분석 도구(probe_queue.py)가 이 줄 모양에 기댄다.
+        Start();
+        var traceLog = new ManualLogSource("queue-trace");
+        var traced = new List<string>();
+        traceLog.LogEvent += (_, e) => traced.Add(e.Data?.ToString() ?? "");
+        var levels = new LevelListener();
+        BepInEx.Logging.Logger.Listeners.Add(levels);
+        TimingTrace.Init(traceLog, true);
+        var tracer = new BattleLogger(traceLog, null, false, new HashSet<int>(), false, true, NameTable.Load("", _ => { }));
+        tracer.OnFrame(new FrameHeader(5004, 0, 0, 31), Array.Empty<byte>());
+        tracer.OnFrame(new FrameHeader(5028, 0, 0, 32), Array.Empty<byte>());
+        tracer.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 33), Array.Empty<byte>());
+        TimingTrace.Init(traceLog, false);
+        BepInEx.Logging.Logger.Listeners.Remove(levels);
+        var shape = new List<string>();
+        bool tracePinned = true;
+        foreach (string line in traced)
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(line, @"frame cmd=(\d+) .* seq=(\d+|-) grp=(\d+)$");
+            if (!m.Success) continue;
+            int tc = int.Parse(m.Groups[1].Value);
+            string ts = m.Groups[2].Value;
+            long tg = long.Parse(m.Groups[3].Value);
+            shape.Add($"{tc}/{ts}/{tg}");
+            bool known = QueueTracker.TryRefOf(tg, out long tr, out int trc);
+            tracePinned &= ts == "-" ? !known : known && tr == long.Parse(ts) && trc == tc;
+        }
+        tracePinned &= string.Join(" ", shape) == "5004/-/1 5028/1/2 1040/2/3";
+        Check(tracePinned, "QT25 frame 기록 줄은 도착 번호(seq)와 그룹(grp)을 붙이고 즉시 처리는 seq=-로 쓴다", string.Join(" ", shape));
 
         QueueTracker.ResetForTest();
         Console.WriteLine(_fail == 0 ? "=== 대기열 추적 전부 통과 ===" : $"=== 대기열 추적 실패 {_fail}건 ===");
