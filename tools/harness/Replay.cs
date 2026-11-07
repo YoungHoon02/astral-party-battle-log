@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using AstralPartyBattleLog.Log;
+using AstralPartyBattleLog.Net;
 using AstralPartyBattleLog.UI;
 
 // 재생 기록 검사·재생기. 규칙은 docs/TIMING-REPLAY-HANDOFF.md 4.5절·7절.
@@ -157,6 +158,10 @@ static class ReplayCheck
                 case "queue-ref":
                     if (!items.Contains(e.GetProperty("itemId").GetInt64())) Bad(r, "모르는 itemId");
                     break;
+                case "queue":
+                case "queue-link":
+                    if (open is null) Bad(r, $"Pump 밖의 {r.Type}");
+                    break;
                 case "signal":
                     if (!signals.Add(e.GetProperty("signalId").GetInt64())) Bad(r, "signalId 중복");
                     break;
@@ -285,6 +290,21 @@ static class ReplayCheck
         return takeItems;
     }
 
+    // 추적 상태는 바뀐 Pump에만 기록되므로 앞 Pump의 값을 이어 받는다.
+    static void QueueInputs(List<Rec> recs, int from, int to, ref QueueSnapshot queue, List<(long Opener, long End)> links)
+    {
+        links.Clear();
+        for (int k = from; k < to; k++)
+        {
+            JsonElement e = recs[k].E;
+            if (recs[k].Type == "queue")
+                queue = OverlaySchedule.QueueIn(e.GetProperty("mode").GetString()!, e.GetProperty("startedThrough").GetInt64(),
+                                                e.GetProperty("doneThrough").GetInt64());
+            else if (recs[k].Type == "queue-link")
+                links.Add((e.GetProperty("opener").GetInt64(), e.GetProperty("end").GetInt64()));
+        }
+    }
+
     // 기록된 입력·시각을 실제 스케줄러에 주입한다. 결정은 sink로, 기록의 결정은 expected로 모은다.
     static string? Drive(List<Rec> recs, MemorySink sink, out List<string> expected,
                          out Dictionary<long, OverlaySchedule.ItemIn> items, out int marks)
@@ -295,6 +315,8 @@ static class ReplayCheck
         expected = new List<string>();
         marks = 0;
         string? stop = null;
+        QueueSnapshot queue = default;
+        var links = new List<(long Opener, long End)>();
 
         for (int i = 0; i < recs.Count && stop is null; i++)
         {
@@ -339,9 +361,11 @@ static class ReplayCheck
                         break;
                     }
                     List<OverlaySchedule.ItemIn> takeItems = PumpInputs(recs, i + 1, endAt, items, out var takeSignals, signals);
+                    QueueInputs(recs, i + 1, endAt, ref queue, links);
                     stop = OverlaySchedule.ReplayPort.Pump(e.GetProperty("pumpId").GetInt64(), e.GetProperty("nowUs").GetInt64(),
                                                            e.GetProperty("mode").GetString() == "gated",
-                                                           (int)e.GetProperty("observedGen").GetInt64(), takeItems, takeSignals);
+                                                           (int)e.GetProperty("observedGen").GetInt64(), takeItems, takeSignals,
+                                                           queue, links);
                     break;
             }
         }

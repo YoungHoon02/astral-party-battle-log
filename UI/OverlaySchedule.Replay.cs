@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using AstralPartyBattleLog.Log;
+using AstralPartyBattleLog.Net;
 
 namespace AstralPartyBattleLog.UI;
 
@@ -13,7 +14,7 @@ namespace AstralPartyBattleLog.UI;
 internal static partial class OverlaySchedule
 {
     // 결정 로직(게이트·모델·장부·장벽·상한)을 바꾸면 올린다. 재생기는 모르는 버전을 거부한다.
-    public const int SchedulerVersion = 3;
+    public const int SchedulerVersion = 4;
     public const int ReplayFormat = 1;
     private const long Null = ReplayRecord.Null;
     private const int MaxInstances = 65536;
@@ -21,7 +22,7 @@ internal static partial class OverlaySchedule
     private enum Rec : byte
     {
         Header, Init, Tick, Item, Control, Signal, Env, PumpBegin, Take, SignalTake, Decision, Diagnostic, PumpEnd, Mark,
-        QueueRef,
+        QueueRef, Queue, QueueLink,
     }
 
     private enum Act : byte { Schedule, Transfer, Resolve, Release, Drop }
@@ -29,7 +30,7 @@ internal static partial class OverlaySchedule
     private enum Why : byte
     {
         Model, Sync, OwnSignal, LaterSignal, WindowClose, Cap, Budget, GroupFollow, CounterSync, Fallback,
-        Stale, Reset, Discard,
+        Stale, Reset, Discard, QueueStart, QueueEnd,
     }
 
     private enum Env : byte { HookSuccess, HookFail, HookDisabled, Fallback, ForgetBanner }
@@ -42,7 +43,7 @@ internal static partial class OverlaySchedule
     private static readonly string[] RecNames =
     {
         "header", "init", "tick", "item", "control", "signal", "env", "pump-begin", "take", "signal-take",
-        "decision", "diagnostic", "pump-end", "mark", "queue-ref",
+        "decision", "diagnostic", "pump-end", "mark", "queue-ref", "queue", "queue-link",
     };
     private static readonly string[] ItemSignalNames = { "line", "page", "clear", "sync", "advance" };
     private static readonly string[] ScreenNames = { "dice-face", "window", "hit", "round-tip", "top-tip" };
@@ -50,8 +51,9 @@ internal static partial class OverlaySchedule
     private static readonly string[] WhyNames =
     {
         "model", "sync", "own-signal", "later-signal", "window-close", "cap", "budget", "group-follow",
-        "counter-sync", "fallback", "stale", "reset", "discard",
+        "counter-sync", "fallback", "stale", "reset", "discard", "queue-start", "queue-end",
     };
+    private static readonly string[] QueueModeNames = { "off", "live", "frozen" };
     private static readonly string[] EnvNames = { "hook-success", "hookfail", "hook-disabled", "fallback", "forget-banner" };
     private static readonly string[] DiagNames =
     {
@@ -204,6 +206,14 @@ internal static partial class OverlaySchedule
         Type = (byte)Rec.QueueRef, A = item.Id, B = item.Ref, C = (item.Result ? 1 : 0) | (item.Opener ? 2 : 0),
     });
 
+    private static void RecordQueue(in QueueSnapshot q) => Emit(new ReplayRecord
+    {
+        Type = (byte)Rec.Queue, A = (long)q.Mode, B = q.StartedThrough, C = q.DoneThrough,
+    });
+
+    private static void RecordQueueLink(long opener, long end) =>
+        Emit(new ReplayRecord { Type = (byte)Rec.QueueLink, A = opener, B = end });
+
     // 포인터는 기록용 번호로 바꾼다. 같은 포인터는 끝까지 같은 번호다(재사용을 새 객체로 판정하지 않는다).
     // 0은 배너 미학습 판정(IntPtr.Zero 비교)과 뜻이 겹쳐 그대로 0으로 둔다.
     private static void RecordSignal(in PendingSignal s)
@@ -295,7 +305,7 @@ internal static partial class OverlaySchedule
 
     private static int HealthResolution(Why why) => why switch
     {
-        Why.LaterSignal => 1,
+        Why.LaterSignal or Why.QueueEnd => 1,
         Why.Cap => 2,
         Why.Budget => 3,
         _ => 0,
@@ -405,6 +415,15 @@ internal static partial class OverlaySchedule
                 Num(sb, "itemId", r.A);
                 Num(sb, "ref", r.B);
                 Num(sb, "flags", r.C);
+                break;
+            case Rec.Queue:
+                Str(sb, "mode", QueueModeNames[r.A]);
+                Num(sb, "startedThrough", r.B);
+                Num(sb, "doneThrough", r.C);
+                break;
+            case Rec.QueueLink:
+                Num(sb, "opener", r.A);
+                Num(sb, "end", r.B);
                 break;
         }
         sb.Append('}');

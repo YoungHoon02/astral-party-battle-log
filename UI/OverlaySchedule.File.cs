@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Diagnostics;
+using System.Threading;
 using AstralPartyBattleLog.Log;
 
 namespace AstralPartyBattleLog.UI;
@@ -9,7 +10,8 @@ namespace AstralPartyBattleLog.UI;
 // 연출보다 먼저 결과를 보게 되어, 오버레이를 늦춘 의미가 사라진다. 근거는 docs/ARCHITECTURE.md "파일 기록 시점".
 internal static partial class OverlaySchedule
 {
-    // 펌프가 멈춰도(프레임 후크 오류 등) 파일 기록이 영영 막히지 않게 하는 여유. 정상 대기 상한보다 길어야 한다.
+    // 펌프가 이만큼 돌지 않으면(프레임 후크 오류 등) 보류 중인 줄을 미표시로 써서 파일 기록이 영영 막히지 않게 한다.
+    // 줄의 나이로 재면 대기열 규칙으로 오래 기다리는 줄이 오버레이보다 먼저 파일에 쓰인다(docs/QUEUE-SYNC.md 규칙 8).
     private const long FileStallMarginUs = 60_000_000;
 
     private static readonly object FileGate = new();
@@ -17,26 +19,33 @@ internal static partial class OverlaySchedule
     private static LogFileWriter? _file;
     private static long _fileKeys;
 
+    // 펌프 멈춤은 펌프와 함께 멈추는 스케줄러 시계로 잴 수 없어 벽시계를 쓴다. 하네스가 바꿔 끼운다.
+    private static readonly Stopwatch FileWatch = Stopwatch.StartNew();
+    internal static Func<long> FileClockUs = () => FileWatch.ElapsedTicks * 1_000_000L / Stopwatch.Frequency;
+    private static long _lastPumpUs;
+
     public static void AttachFile(LogFileWriter? file)
     {
-        lock (FileGate) _file = file;
+        lock (FileGate)
+        {
+            _file = file;
+            Volatile.Write(ref _lastPumpUs, FileClockUs());
+        }
     }
 
     private static long HoldForFile(string text)
     {
         if (_file is null) return 0;
         DateTime now = DateTime.Now;
-        TimeSpan stall = TimeSpan.FromTicks((Math.Max(_maxLagUs, GateCapUs) + FileStallMarginUs) * 10);
+        bool stalled = FileClockUs() - Volatile.Read(ref _lastPumpUs) >= FileStallMarginUs;
         lock (FileGate)
         {
             LogFileWriter? file = _file;
             if (file is null) return 0;
-            while (FilePending.Count > 0)
+            if (stalled)
             {
-                (long key, (DateTime At, string Text) oldest) = FilePending.First();
-                if (now - oldest.At < stall) break;
-                FilePending.Remove(key);
-                file.AppendUnshown(oldest.Text, oldest.At);
+                foreach ((DateTime at, string pending) in FilePending.Values) file.AppendUnshown(pending, at);
+                FilePending.Clear();
             }
             long next = ++_fileKeys;
             FilePending[next] = (now, Palette.Strip(text));

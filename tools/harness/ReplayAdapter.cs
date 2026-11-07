@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using AstralPartyBattleLog.Log;
+using AstralPartyBattleLog.Net;
 using BepInEx.Logging;
 
 namespace AstralPartyBattleLog.UI;
@@ -17,11 +18,18 @@ internal static partial class OverlaySchedule
     internal readonly record struct SignalIn(
         long Id, long AtUs, int Gen, string Kind, int Pip, bool On, long InstanceId);
 
+    internal static QueueSnapshot QueueIn(string mode, long startedThrough, long doneThrough) =>
+        new((QueueMode)Array.IndexOf(QueueModeNames, mode), startedThrough, doneThrough);
+
     internal static class ReplayPort
     {
         private static readonly Action<string> NoLine = _ => { };
         private static readonly Action<int> NoPage = _ => { };
         private static readonly Action NoClear = () => { };
+
+        // 재생 중에는 추적기를 부르지 않고 그 Pump에 기록된 추적 상태·끝 기준을 쓴다.
+        private static QueueSnapshot _queue;
+        private static readonly List<(long Opener, long End)> PumpLinks = new();
 
         public static IReplaySink? Current => _recording ? _sink : null;
 
@@ -35,6 +43,14 @@ internal static partial class OverlaySchedule
         {
             _sink = sink;
             _recording = true;
+            _readQueue = () => _queue;
+            _drainLinks = into =>
+            {
+                into.AddRange(PumpLinks);
+                int n = PumpLinks.Count;
+                PumpLinks.Clear();
+                return n;
+            };
         }
 
         public static void Init(long nowUs, int speedBits, bool enabled, long maxLagUs)
@@ -58,11 +74,15 @@ internal static partial class OverlaySchedule
 
         // 이 Pump가 실제로 꺼낸 입력만 넣는다. 미래 Pump 소속 입력을 미리 넣지 않는다.
         public static string? Pump(long pumpId, long nowUs, bool gated, int observedGen,
-                                   IEnumerable<ItemIn> items, IEnumerable<SignalIn> signals)
+                                   IEnumerable<ItemIn> items, IEnumerable<SignalIn> signals,
+                                   QueueSnapshot queue, IEnumerable<(long Opener, long End)> links)
         {
             if (_gating != gated) return $"pump {pumpId}: mode differs (recorded {(gated ? "gated" : "model")})";
             if (_generation != observedGen) return $"pump {pumpId}: generation {_generation} != recorded {observedGen}";
             _nowUs = nowUs;
+            _queue = queue;
+            PumpLinks.Clear();
+            PumpLinks.AddRange(links);
             foreach (ItemIn i in items)
                 Incoming.Enqueue(new Item(
                     (Signal)Array.IndexOf(ItemSignalNames, i.Signal), Enum.Parse<LineKind>(i.Kind, ignoreCase: true),

@@ -190,12 +190,21 @@ internal static partial class OverlaySchedule
         _cause = Null;
         Signals.Clear();
 
+        // 대기열 규칙 적용 중에는 수신부터 세는 상한을 걸지 않는다. 봇전에서 화면이 60초 넘게 뒤처져 오히려
+        // 먼저 공개한다(규칙 3·5).
         foreach (Entry e in Queue)
-            if (e.Gate != Gate.None && e.Res == Resolution.None && now - e.Item.ReceivedUs >= GateCapUs)
+        {
+            if (e.Gate == Gate.None || e.Res != Resolution.None) continue;
+            if (Queued(e.Item))
+            {
+                if (EndedOf(e.Item)) Resolve(e, Resolution.Late, now, Why.QueueEnd);
+            }
+            else if (now - e.Item.ReceivedUs >= GateCapUs)
             {
                 Resolve(e, Resolution.Cap, now, Why.Cap);
                 GateTrace($"timeout kind={e.Gate.ToString().ToLowerInvariant()} waited={(now - e.Item.ReceivedUs) / 1000}ms");
             }
+        }
 
         while (Queue.Count > 0)
         {
@@ -207,6 +216,9 @@ internal static partial class OverlaySchedule
                 continue;
             }
 
+            bool queued = Queued(head.Item);
+            if (queued && !Started(head.Item.Ref) && Queue.Count <= MaxWaiting) break;
+
             if (head.Gate != Gate.None)
             {
                 if (head.Res == Resolution.None)
@@ -215,6 +227,12 @@ internal static partial class OverlaySchedule
                     Resolve(head, Resolution.Cap, now, Why.Budget);
                 }
                 ReleaseGated(head, now, line, page, clear);
+                continue;
+            }
+
+            if (queued)
+            {
+                if (!ReleaseQueued(head, now, line, page, clear)) break;
                 continue;
             }
 
@@ -243,6 +261,25 @@ internal static partial class OverlaySchedule
             Release(new Scheduled(head.Item, head.DueUs, head.FloorUs, head.Seq), now, line, page, clear, why,
                     why == Why.LaterSignal ? _forceCause : Null);
         }
+    }
+
+    // 규칙 4: 결과 줄은 끝 기준의 처리 끝에, 나머지는 처리 시작에 낸다. 처리 구간이 공개 시점을 보장하므로
+    // 장벽·반격 동기화·모델 기한은 보지 않는다. 모델 예약은 지금 방식으로 돌아갈 때를 위해 계산해 둔다(규칙 6).
+    private static bool ReleaseQueued(Entry head, long now, Action<string> line, Action<int> page, Action clear)
+    {
+        if (!head.Scheduled)
+        {
+            head.DueUs = DueOf(head.Item, out head.FloorUs);
+            head.Scheduled = true;
+            Decide(Act.Schedule, head.Item, Why.Model, due: head.DueUs, floor: head.FloorUs);
+        }
+        bool reached = Started(head.Item.Ref) && (!head.Item.Result || EndedOf(head.Item));
+        if (!reached && Queue.Count <= MaxWaiting) return false;
+        Queue.RemoveAt(0);
+        Release(new Scheduled(head.Item, head.DueUs, head.FloorUs, head.Seq), now, line, page, clear,
+                !reached ? Why.Budget : head.Item.Result ? Why.QueueEnd : Why.QueueStart);
+        if (reached) Anchor(now, seen: true);
+        return true;
     }
 
     private static Entry NewEntry(Item item, long seq)
@@ -340,7 +377,7 @@ internal static partial class OverlaySchedule
             ScreenCandidates.Gap(head.Why switch
             {
                 Why.WindowClose => GapKind.Weak,
-                Why.LaterSignal => GapKind.Late,
+                Why.LaterSignal or Why.QueueEnd => GapKind.Late,
                 Why.Cap => GapKind.Cap,
                 _ => GapKind.Budget,
             }, head.Gate.ToString().ToLowerInvariant(), head.Item.ReceivedUs, now);
@@ -361,7 +398,8 @@ internal static partial class OverlaySchedule
 
         if (head.Res != Resolution.Signal)
         {
-            Anchor(now);
+            // 처리 끝은 화면이 그 연출을 지났다는 뜻이라 커서를 여기로 되돌린다(규칙 6).
+            Anchor(now, seen: head.Why == Why.QueueEnd);
             return;
         }
         if (head.Gate is Gate.Round or Gate.Turn)
@@ -424,6 +462,7 @@ internal static partial class OverlaySchedule
     // 손대지 않는다. 창보다 늦게 받은 줄은 이 PK 뒤 사건일 수 있어 풀지 않는다.
     private static void PkStarted(long atUs)
     {
+        if (_queueActive) return;
         (Entry? pk, Ledger? owed) = OldestPk(afterSeq: -1, long.MaxValue, originalOnly: true);
         if (owed is not null) return;
         foreach (Entry e in Queue)
@@ -455,12 +494,19 @@ internal static partial class OverlaySchedule
     {
         Entry? pending = null;
         foreach (Entry e in Queue)
-            if (e.Gate == Gate.Dice && e.Res == Resolution.None && e.Pips.Contains(pip) && e.Item.ReceivedUs < atUs)
+        {
+            if (e.Gate != Gate.Dice || e.Res != Resolution.None) continue;
+            Fit fit = SignalFit(e);
+            if (fit == Fit.Skip) continue;
+            if (fit == Fit.Stop) break;
+            if (e.Pips.Contains(pip) && e.Item.ReceivedUs < atUs)
             {
                 pending = e;
                 break;
             }
-        Ledger? owed = Unconsumed.Find(l => l.Gate == Gate.Dice && l.Pips.Contains(pip) && l.ReceivedUs < atUs);
+        }
+        Ledger? owed = _queueActive ? null
+            : Unconsumed.Find(l => l.Gate == Gate.Dice && l.Pips.Contains(pip) && l.ReceivedUs < atUs);
 
         if (owed is not null && (pending is null || owed.Seq < pending.Seq))
         {
@@ -570,12 +616,14 @@ internal static partial class OverlaySchedule
         // 수신 순서라 가장 오래된 미해결 항목이 이벤트보다 늦게 왔으면 그 뒤도 모두 늦다.
         Entry? pending = null;
         foreach (Entry e in Queue)
-            if (e.Gate == Gate.Pk && e.Seq > afterSeq && e.Res == Resolution.None
-                && !(originalOnly && e.Counter))
-            {
-                if (e.Item.ReceivedUs < beforeUs) pending = e;
-                break;
-            }
+        {
+            if (e.Gate != Gate.Pk || e.Seq <= afterSeq || e.Res != Resolution.None || originalOnly && e.Counter) continue;
+            Fit fit = SignalFit(e);
+            if (fit == Fit.Skip) continue;
+            if (fit == Fit.Take && e.Item.ReceivedUs < beforeUs) pending = e;
+            break;
+        }
+        if (_queueActive) return (pending, null);
 
         Ledger? owed = null;
         foreach (Ledger l in Unconsumed)
@@ -586,8 +634,10 @@ internal static partial class OverlaySchedule
     }
 
     // 화면은 수신 순서대로 재생하므로(설계 전제 1) 뒤 사건의 신호가 오면 앞 대기 줄은 이미 지나갔다.
+    // 대기열 규칙 적용 중에는 앞 줄이 자기 처리 끝(QueueEnd)으로 풀린다.
     private static void ResolveOlder(long seq, long atUs)
     {
+        if (_queueActive) return;
         foreach (Entry e in Queue)
         {
             if (e.Seq >= seq) break;
@@ -613,8 +663,9 @@ internal static partial class OverlaySchedule
         }
         // 눈을 모르는 주사위는 올 신호가 없어 장부에 올릴 것도 없다. 라운드 팁은 뒤에 받은 페이지와만 짝지어져
         // 늦게 와도 다른 줄을 먼저 풀지 않는다. 차례 줄이 늦은 경로로 풀렸다면 그 배너는 이미 놓친 것이라,
-        // 장부에 올리면 뒤 차례 줄이 모두 배너 하나씩 밀린다.
-        if (e.Gate == Gate.Dice && e.Pips.Count == 0 || e.Gate is Gate.Round or Gate.Turn) return;
+        // 장부에 올리면 뒤 차례 줄이 모두 배너 하나씩 밀린다. 대기열 규칙 적용 중에는 처리 중인 줄의 신호만
+        // 받으므로 늦게 온 신호를 소비할 장부가 필요 없다.
+        if (e.Gate == Gate.Dice && e.Pips.Count == 0 || e.Gate is Gate.Round or Gate.Turn || _queueActive) return;
         // 자기 신호 없이 공개한 줄은 모두 장부에 올린다. 그 신호가 늦게 오면 다음 줄 대신 여기서 소비된다.
         Unconsumed.Add(new Ledger
         {

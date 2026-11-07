@@ -38,6 +38,8 @@ static class ReplayTests
                 return ChildKilled(args[1]);
             case "scenario":
                 return ChildScenario(args[1], args[2]);
+            case "queue":
+                return ChildQueue(args[1]);
             case "replay":
                 return ReplayCheck.Run(args[1], lenient: args.Contains("--lenient"));
             case "compare":
@@ -61,6 +63,14 @@ static class ReplayTests
         if (w is not null) OverlaySchedule.Shutdown(unload: false);
         Console.WriteLine($"#stat ms={sw.ElapsedMilliseconds} maxQueue={w?.MaxQueueDepth ?? 0} "
                           + $"bytes={(file is null ? 0 : new FileInfo(file).Length)}");
+        return fails;
+    }
+
+    static int ChildQueue(string file)
+    {
+        OverlaySchedule.StartReplay(NewWriter(file));
+        int fails = Sched.RunQueueReplayCases();
+        OverlaySchedule.Shutdown(unload: false);
         return fails;
     }
 
@@ -218,6 +228,7 @@ static class ReplayTests
         CheckContent(lines);
         CheckCorruption(bytes, lines);
         CheckScenarios(dir);
+        CheckQueueReplay(dir);
         CheckWriter(dir);
         CheckSpanOrder();
 
@@ -416,6 +427,22 @@ static class ReplayTests
         Check(ocReplay.Code == 2 && ocReplay.Out.Contains("경합"), "SC7 세대 변경끼리 겹친 기록도 경합으로 거부한다");
         var lenient = Child("replay", F("overlap-span"), "--lenient");
         Check(lenient.Out.Contains("불완전 재생(참고용)"), "SC6 참고 재생 모드는 불완전 재생임을 밝힌다");
+    }
+
+    // 추적 상태·걷기 끝 기준이 기록에 남아 재생에서 그대로 되살아나야 대기열 규칙의 결정이 같아진다.
+    static void CheckQueueReplay(string dir)
+    {
+        string file = Path.Combine(dir, "queue.jsonl");
+        if (File.Exists(file)) File.Delete(file);
+        var recorded = Child("queue", file);
+        var replay = Child("replay", file);
+        string text = File.Exists(file) ? File.ReadAllText(file) : "";
+        bool exercised = text.Contains("\"type\":\"queue\"") && text.Contains("\"type\":\"queue-link\"")
+                         && text.Contains("\"reason\":\"queue-start\"") && text.Contains("\"reason\":\"queue-end\"");
+        Check(recorded.Code == 0 && exercised && replay.Code == 0 && replay.Out.Contains("결정 일치"),
+              "QS16 대기열 규칙 시험(QS1~QS5·QS10~QS14)을 기록해 새 프로세스에서 재생하면 결정이 모두 같다",
+              $"시험 exit {recorded.Code}, 추적 기록 {(exercised ? "있음" : "없음")}, "
+              + Regex.Match(replay.Out, "결정 [^\n]*").Value.Trim());
     }
 
     // ── writer ──────────────────────────────────────────────────────────

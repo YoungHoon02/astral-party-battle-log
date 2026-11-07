@@ -116,6 +116,9 @@ internal static partial class OverlaySchedule
         _gating = enabled;
         _anchorUs = long.MinValue;
         _maxLagUs = Math.Max(0, maxLagMs) * 1000L;
+        // 하네스와 재생은 Init을 시험의 시작점으로 쓴다. 도착 번호를 1부터 다시 세는 시험이 앞 시험의 끝 기준을
+        // 물려받지 않게, 추적 상태 사본도 여기서 비운다(게임에서는 시작할 때 한 번만 불린다).
+        ResetQueue();
         TimingTrace.Init(log, traceTiming);
         ScheduleHealth.Init(log.LogInfo, ReplayState);
         ScheduleHealth.Gating(_gating);
@@ -241,9 +244,11 @@ internal static partial class OverlaySchedule
         _touched = true;
         long now = _nowUs;
         bool rec = _recording;
+        Volatile.Write(ref _lastPumpUs, FileClockUs());
         if (rec) BeginPump(now);
         try
         {
+            RefreshQueue(now, rec);
             if (_gating) PumpGated(now, line, page, clear);
             else PumpModel(now, line, page, clear);
             ScheduleHealth.QueueDepth(Queue.Count + Waiting.Count);
@@ -271,6 +276,7 @@ internal static partial class OverlaySchedule
             Waiting.Enqueue(new Scheduled(item, due, floor, seq));
         }
 
+        long endGroup = -1;
         while (Waiting.Count > 0)
         {
             Scheduled head = Waiting.Peek();
@@ -278,6 +284,21 @@ internal static partial class OverlaySchedule
             {
                 Waiting.Dequeue();
                 Drop(head.Item);
+                continue;
+            }
+            // 규칙 7: 신호가 없으니 결과를 보여 주는 줄(결과·주사위·PK)은 끝 기준의 처리 끝까지 기다린다.
+            // 같은 그룹의 뒤 줄(PK 줄 뒤 체력 줄)은 앞 줄과 함께 나간다.
+            if (Queued(head.Item))
+            {
+                Item it = head.Item;
+                bool needsEnd = it.Result || it.Signal == Signal.Line && it.Kind is LineKind.Dice or LineKind.Attack
+                                || it.Group >= 0 && it.Group == endGroup;
+                bool reached = Started(it.Ref) && (!needsEnd || EndedOf(it));
+                if (!reached && Waiting.Count <= MaxWaiting) break;
+                Waiting.Dequeue();
+                Release(head, now, line, page, clear, !reached ? Why.Budget : needsEnd ? Why.QueueEnd : Why.QueueStart);
+                if (reached) Anchor(now, seen: true);
+                if (needsEnd) endGroup = it.Group;
                 continue;
             }
             // 동기화는 밀린 줄을 앞당기지만 결과 공개 하한까지만이다. 본인 주사위는 결정 창 닫힘(5308)이

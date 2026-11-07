@@ -308,6 +308,7 @@ static class Sched
         Expect("P22 t=6.4", "pk");
 
         RunScreenSignals(log);
+        RunQueueRules(log);
 
         Console.WriteLine(_fail == 0 ? "=== 전부 통과 ===" : $"=== 실패 {_fail}건 ===");
         return _fail;
@@ -700,6 +701,420 @@ static class Sched
         {
             OverlaySchedule.ReplayPort.Swap(previous);
             QueueTracker.ResetForTest();
+        }
+    }
+
+    // ── 대기열 공개 규칙 (docs/QUEUE-SYNC.md "2단계: 공개 규칙") ──
+    // 시험마다 추적기를 비우므로 도착 번호는 시험 안에서 1부터 센다. 나간 줄 뒤에 공개 사유를 붙여 비교한다.
+
+    static TeeSink? _qTee;
+    static readonly Dictionary<string, long> QIds = new();
+    static readonly List<(int Cmd, long Down)> QArrivals = new();
+    static int _qFrame;
+
+    static void RunQueueRules(ManualLogSource log)
+    {
+        Console.WriteLine("=== 대기열 공개 규칙 ===");
+        WithQueueTee(() =>
+        {
+            Qs1(log); Qs2(log); Qs3(log); Qs4(log); Qs5(log); Qs6(log); Qs7(log); Qs8(log);
+            Qs9(log); Qs10(log); Qs11(log); Qs12(log); Qs13(log); Qs14(log); Qs15(log);
+        });
+    }
+
+    // QS16: 이 묶음을 따로 기록해 새 프로세스에서 재생한다(ReplayTests).
+    public static int RunQueueReplayCases()
+    {
+        var log = new ManualLogSource("queue-replay");
+        WithQueueTee(() =>
+        {
+            Qs1(log); Qs2(log); Qs3(log); Qs4(log); Qs5(log);
+            Qs10(log); Qs11(log); Qs12(log); Qs13(log); Qs14(log);
+        });
+        return _fail;
+    }
+
+    static void WithQueueTee(Action body)
+    {
+        IReplaySink? previous = OverlaySchedule.ReplayPort.Current;
+        _qTee = new TeeSink(previous);
+        OverlaySchedule.ReplayPort.Swap(_qTee);
+        try
+        {
+            body();
+        }
+        finally
+        {
+            OverlaySchedule.ReplayPort.Swap(previous);
+            _qTee = null;
+            QueueTracker.ResetForTest();
+        }
+    }
+
+    static void QStart(ManualLogSource log, bool queueSync = true, bool enabled = true, bool signals = true)
+    {
+        QueueTracker.ResetForTest();
+        QueueTracker.Configure(queueSync);
+        Setup(log, enabled: enabled, signals: signals);
+        _qTee!.Records.Clear();
+        QIds.Clear();
+        QArrivals.Clear();
+    }
+
+    // 메시지 하나를 받는다. 반환값은 로거가 그 프레임에 연 그룹 번호다.
+    static long QMsg(int cmd)
+    {
+        long down = 500 + QArrivals.Count;
+        long arrival = QueueTracker.Arrive(cmd, down, 0);
+        QArrivals.Add((cmd, down));
+        long group = 1000 + QArrivals.Count;
+        QueueTracker.NoteGroup(group, arrival, cmd);
+        return group;
+    }
+
+    static void QFill(int count)
+    {
+        for (int i = 0; i < count; i++) QMsg(1002);
+    }
+
+    static void QLine(string text, LineKind kind, long group, int detail = 0)
+    {
+        OverlaySchedule.Line(text, kind, group, 0, detail);
+        QIds[text] = _qTee!.LastItem;
+    }
+
+    // 게임 프레임 하나: 펌프 직전에 대기열을 읽고 스케줄러를 돌린다.
+    static void QFrame(QueueObservation obs, double seconds = 0.01)
+    {
+        QueueTracker.BeginFrame(++_qFrame);
+        QueueTracker.Apply(obs);
+        Advance(seconds);
+    }
+
+    static void QHead(int arrival, double seconds = 0.01)
+    {
+        (int cmd, long down) = QArrivals[arrival - 1];
+        QFrame(new QueueObservation(QueueRead.Head, cmd, down, 1), seconds);
+    }
+
+    static void QEmpty(int frames)
+    {
+        for (int i = 0; i < frames; i++) QFrame(new QueueObservation(QueueRead.Empty));
+    }
+
+    static string QWhy(long id)
+    {
+        for (int i = _qTee!.Records.Count - 1; i >= 0; i--)
+        {
+            var e = _qTee.Records[i];
+            if (e.GetProperty("type").GetString() == "decision" && e.GetProperty("action").GetString() == "release"
+                && e.GetProperty("itemRef").GetInt64() == id)
+                return e.GetProperty("reason").GetString()!;
+        }
+        return "?";
+    }
+
+    static void QExpect(string label, params string[] want)
+    {
+        for (int i = 0; i < Out.Count; i++)
+            if (QIds.TryGetValue(Out[i], out long id)) Out[i] += ":" + QWhy(id);
+        Expect(label, want);
+    }
+
+    static void Qs1(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(1);
+        QLine("card", LineKind.Card, QMsg(5056));
+        QHead(1);
+        for (int i = 0; i < 10; i++) Advance(1.0);
+        QExpect("QS1 하한: 맨 앞이 앞 메시지(1)에 머문 10초 동안 카드 줄(도착 2)을 내지 않는다");
+        QHead(2);
+        QExpect("QS1 맨 앞이 그 메시지(2)가 되면 처리 시작으로 낸다", "card:queue-start");
+    }
+
+    static void Qs2(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(2);
+        long attr = QMsg(1040);
+        QFill(1);
+        QLine("gold", LineKind.Effect, attr);
+        QHead(3);
+        Advance(5.0);
+        QExpect("QS2 결과 줄(1040, 도착 3)은 그 메시지가 처리 중이면 내지 않는다");
+        QHead(4);
+        QExpect("QS2 처리가 끝나면(맨 앞 4) 처리 끝으로 낸다", "gold:queue-end");
+    }
+
+    static void Qs3(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(4);
+        long pk = QMsg(1007);
+        long attr = QMsg(1040);
+        QFill(1);
+        QLine("pk", LineKind.Attack, pk);
+        QLine("hp", LineKind.Hit, pk);
+        QLine("gold", LineKind.Effect, attr);
+        QHead(4);
+        Sig(ScreenSignal.Window, true);
+        Advance(2.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.01);
+        QExpect("QS3 PK 결과(도착 5)가 시작되기 전(맨 앞 4)의 창 켜짐·타격으로는 아무것도 내지 않는다");
+        Sig(ScreenSignal.Hit, false, instance: 1);
+        Sig(ScreenSignal.Window, false);
+        QHead(5);
+        Sig(ScreenSignal.Window, true);
+        Advance(2.0);
+        Sig(ScreenSignal.Hit, true, instance: 2);
+        Advance(0.01);
+        QExpect("QS3 처리 중(맨 앞 5) 타격에 PK 줄과 체력 줄을 함께 내고 골드 줄(도착 6)은 남긴다",
+                "pk:own-signal", "hp:group-follow");
+        QHead(7);
+        QExpect("QS3 골드 줄은 그 1040의 처리 끝(맨 앞 7)에 낸다", "gold:queue-end");
+    }
+
+    static void Qs4(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(5);
+        long dice = QMsg(5022);
+        QMsg(1002);
+        QMsg(5028);
+        QLine("m", LineKind.Dice, dice);
+        QHead(8);
+        Advance(5.0);
+        QExpect("QS4 눈을 모르는 주사위(도착 6)는 끝 기준인 걷기(도착 8)가 처리 중이면 내지 않는다");
+        QEmpty(6);
+        QExpect("QS4 걷기 처리가 끝나면(빈 목록 6틱) 신호 없이 처리 끝으로 낸다", "m:queue-end");
+    }
+
+    static void Qs5(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(8);
+        QLine("pk", LineKind.Attack, QMsg(1007));
+        QHead(8);
+        for (int i = 0; i < 70; i++) Advance(1.0);
+        QExpect("QS5 대기열 규칙 적용 중에는 PK 줄(도착 9)에 60초 상한을 걸지 않는다 (70초)");
+        QFrame(QueueObservation.Unreadable);
+        for (int i = 0; i < 59; i++) Advance(1.0);
+        QExpect("QS5 추적이 멈춘 지 59초까지는 멈춘 경계로 판단한다");
+        Advance(1.0);
+        QExpect("QS5 멈춤을 처음 본 펌프부터 60초가 지나면 지금 방식으로 돌아가 상한으로 낸다", "pk:cap");
+    }
+
+    static void Qs6(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(3);
+        QHead(1);
+        const long Chat = 1999;
+        QueueTracker.NoteGroup(Chat, -1, 5150);
+        QLine("chat", LineKind.Immediate, Chat);
+        Advance(0.01);
+        QExpect("QS6 기준이 없는 줄(즉시 처리 5150)은 맨 앞과 상관없이 지금 방식으로 낸다", "chat:model");
+    }
+
+    static void Qs7(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(1);
+        long round = QMsg(1015);
+        QHead(1);
+        OverlaySchedule.Page(1, round);
+        Advance(0.01);
+        QExpect("QS7 1라운드 페이지는 맨 앞과 상관없이 낸다", "<page 1>");
+    }
+
+    static void Qs8(ManualLogSource log)
+    {
+        QStart(log, queueSync: false);
+        QFill(1);
+        QLine("card", LineKind.Card, QMsg(5056));
+        QHead(1);
+        QExpect("QS8 대기열 동기화를 끄면 줄에 기준이 없어 모델 기한에 낸다", "card:model");
+
+        QStart(log, enabled: false);
+        QFill(1);
+        QLine("pk", LineKind.Attack, QMsg(1007));
+        QHead(1);
+        QExpect("QS8 화면 동기화를 끄면 맨 앞과 상관없이 바로 낸다", "pk:model");
+    }
+
+    static void Qs9(ManualLogSource log)
+    {
+        QStart(log);
+        long pk = QMsg(1007);
+        QLine("pk", LineKind.Attack, pk);
+        QHead(1);
+        Sig(ScreenSignal.Window, true);
+        Advance(2.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.01);
+        QExpect("QS9 PK 줄은 처리 중 타격에", "pk:own-signal");
+        QLine("hp", LineKind.Hit, pk);
+        Advance(0.01);
+        QExpect("QS9 신호로 나간 PK 뒤에 온 같은 그룹 체력 줄은 창 장벽을 기다리지 않고 바로 낸다", "hp:queue-start");
+    }
+
+    static void Qs10(ManualLogSource log)
+    {
+        QStart(log);
+        long card = QMsg(5056);
+        long dice = QMsg(5022);
+        QLine("card", LineKind.Card, card);
+        QLine("d", LineKind.Dice, dice, 3);
+        QHead(1);
+        QExpect("QS10 앞 카드(도착 1)는 처리 시작에", "card:queue-start");
+        Sig(ScreenSignal.DiceFace, false, 3);
+        Advance(0.01);
+        QExpect("QS10 카드가 처리 중일 때 꺼진 눈 3은 뒤 주사위(도착 2)에 짝짓지 않는다");
+        QHead(2);
+        Sig(ScreenSignal.DiceFace, false, 3);
+        Advance(0.01);
+        QExpect("QS10 주사위가 처리 중일 때 꺼진 눈 3에 낸다", "d:own-signal");
+
+        // 신호는 지난 펌프 뒤에 보였다. 그 사이 맨 앞이 바뀌었어도 신호 뒤에 시작한 메시지에 짝짓지 않는다.
+        QStart(log);
+        long weak = QMsg(1007);
+        QMsg(1040);
+        long next = QMsg(1007);
+        QLine("weak", LineKind.Attack, weak);
+        QLine("next", LineKind.Attack, next);
+        QHead(1);
+        Sig(ScreenSignal.Window, true);
+        Advance(2.0);
+        Sig(ScreenSignal.Window, false);
+        QHead(3);
+        QExpect("QS10 약한 창이 닫힌 프레임에 다음 PK(도착 3)가 시작돼도 그 닫힘은 앞 PK(도착 1)에만 짝짓는다",
+                "weak:window-close");
+        Sig(ScreenSignal.Window, true);
+        Advance(2.0);
+        Sig(ScreenSignal.Hit, true, instance: 1);
+        Advance(0.01);
+        QExpect("QS10 다음 PK는 자기 처리 중 타격에", "next:own-signal");
+    }
+
+    static void Qs11(ManualLogSource log)
+    {
+        QStart(log);
+        long a = QMsg(5022);
+        long b = QMsg(5022);
+        QLine("a", LineKind.Dice, a, 3);
+        QLine("b", LineKind.Dice, b, 3);
+        QHead(1);
+        Advance(1.0);
+        QExpect("QS11 주사위 A(도착 1)는 처리 중 신호를 기다린다");
+        QHead(2);
+        QExpect("QS11 신호 없이 A의 처리가 끝나면(맨 앞 2) 처리 끝으로 낸다", "a:queue-end");
+        Sig(ScreenSignal.DiceFace, false, 3);
+        Advance(0.01);
+        QExpect("QS11 장부를 쓰지 않아 B(도착 2)가 처리 중일 때 꺼진 눈 3은 B를 낸다", "b:own-signal");
+    }
+
+    static void Qs12(ManualLogSource log)
+    {
+        QStart(log);
+        long move = QMsg(1096);
+        QMsg(1002);
+        QLine("move", LineKind.Effect, move);
+        QHead(2);
+        Advance(1.0);
+        QExpect("QS12 이동 효과(1096, 도착 1)는 끝 기준인 걷기가 아직 오지 않아 처리가 끝나도 내지 않는다");
+        QMsg(5028);
+        QHead(3);
+        Advance(1.0);
+        QExpect("QS12 걷기(도착 3)가 오면 그 걷기가 끝 기준이고, 걷기가 처리 중이면 내지 않는다");
+        QEmpty(6);
+        QExpect("QS12 걷기 처리가 끝나면 처리 끝으로 낸다", "move:queue-end");
+    }
+
+    static void Qs13(ManualLogSource log)
+    {
+        QStart(log, signals: false);
+        long pk = QMsg(1007);
+        long card = QMsg(5056);
+        QLine("pk", LineKind.Attack, pk);
+        QLine("hp", LineKind.Hit, pk);
+        QLine("card", LineKind.Card, card);
+        QHead(1);
+        Advance(5.0);
+        QExpect("QS13 모델 경로에서도 PK 줄(도착 1)은 처리 중이면 내지 않는다");
+        QHead(2);
+        QExpect("QS13 PK 처리가 끝나면 같은 펌프에 PK·체력 줄은 처리 끝, 카드 줄은 처리 시작으로",
+                "pk:queue-end", "hp:queue-end", "card:queue-start");
+    }
+
+    static void Qs14(ManualLogSource log)
+    {
+        QStart(log);
+        QFill(2);
+        QLine("card", LineKind.Card, QMsg(5056));
+        QHead(2);
+        QueueTracker.Arrive(5008, 900, 0);
+        Advance(1.0);
+        QHead(3);
+        Advance(1.0);
+        QExpect("QS14 방 동기화(5008)로 멈추면 맨 앞이 기준점 이하(3)로 와도 멈춘 경계로 판단해 카드 줄을 내지 않는다");
+        QMsg(1002);
+        QHead(4);
+        QExpect("QS14 기준점 뒤에 도착한 항목(4)과 맞으면 다시 맞음이 되어 낸다", "card:queue-start");
+    }
+
+    static void Qs15(ManualLogSource log)
+    {
+        string path = Path.Combine(Path.GetTempPath(), "apbl-harness-queue-file.txt");
+        File.WriteAllText(path, "");
+        var writer = new LogFileWriter(path, _ => { });
+        Func<long> clock = OverlaySchedule.FileClockUs;
+        long fileUs = 0;
+        OverlaySchedule.FileClockUs = () => fileUs;
+        try
+        {
+            QStart(log);
+            OverlaySchedule.AttachFile(writer);
+            QFill(1);
+            QLine("R", LineKind.Effect, QMsg(1040));
+            QHead(1);
+            for (int i = 0; i < 130; i++)
+            {
+                fileUs += 1_000_000;
+                Advance(1.0);
+            }
+            QLine("X", LineKind.Card, QMsg(5056));
+            QExpect("QS15 결과 줄(도착 2)은 130초 동안 처리 전이라 오버레이에 내지 않는다");
+            QHead(3);
+            QExpect("QS15 처리가 끝나면 결과 줄, 시작되면 카드 줄", "R:queue-end", "X:queue-start");
+            QLine("A", LineKind.Card, QMsg(5056));
+            fileUs += 61_000_000;
+            QLine("B", LineKind.Card, QMsg(5056));
+            QHead(5);
+            Out.Clear();
+        }
+        finally
+        {
+            OverlaySchedule.FileClockUs = clock;
+            OverlaySchedule.FlushFile();
+            OverlaySchedule.AttachFile(null);
+            writer.Close();
+        }
+
+        string[] got = File.ReadAllLines(path);
+        var shown = new System.Text.RegularExpressions.Regex(@"^\d\d:\d\d:\d\d\.\d{3} \(수신 \d\d:\d\d:\d\d\.\d{3}\) ([A-Z])$");
+        var unshown = new System.Text.RegularExpressions.Regex(@"^미표시 \(수신 \d\d:\d\d:\d\d\.\d{3}\) ([A-Z])$");
+        string Shape(string l) => shown.Match(l) is { Success: true } s ? "shown " + s.Groups[1].Value
+            : unshown.Match(l) is { Success: true } u ? "unshown " + u.Groups[1].Value : l;
+        string seq = string.Join(", ", Array.ConvertAll(got, Shape));
+        bool ok = seq == "shown R, shown X, unshown A, shown B";
+        Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} QS15 펌프가 도는 동안 130초 기다린 결과 줄은 미표시로 쓰지 않고 나갈 때 쓰며, "
+                          + $"펌프가 61초 멈춘 뒤 들어온 줄이 앞 대기 줄을 미표시로 쓴다: [{seq}]");
+        if (!ok)
+        {
+            _fail++;
+            Console.WriteLine("       기대: [shown R, shown X, unshown A, shown B]");
         }
     }
 
