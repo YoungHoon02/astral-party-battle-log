@@ -449,7 +449,7 @@ static class QueueTests
         Check(dd && QueueTracker.Health.Unmatched == 1, "QT28 읽는 중에 꺼지면 읽기를 끝내도 대기열에 남는 것이 없다", $"{dd}/{QueueTracker.Health.Unmatched}");
 
         QueueTracker.ResetForTest();
-        Console.WriteLine(_fail == 0 ? "=== 대기열 추적 전부 통과 ===": $"=== 대기열 추적 실패 {_fail}건 ===");
+        Console.WriteLine(_fail == 0 ? "=== 대기열 추적 전부 통과 ===" : $"=== 대기열 추적 실패 {_fail}건 ===");
         return _fail;
     }
 }
