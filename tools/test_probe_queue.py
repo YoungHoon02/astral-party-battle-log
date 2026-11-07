@@ -10,8 +10,8 @@ PREFIX = "[Info   :Astral Party Battle Log] "
 
 
 def stamp(sec):
-    whole = int(sec)
-    milli = round((sec - whole) * 1000)
+    whole = int(sec) % 86400
+    milli = round((sec - int(sec)) * 1000)
     return f"{whole // 3600:02d}:{whole // 60 % 60:02d}:{whole % 60:02d}.{milli:03d}"
 
 
@@ -56,9 +56,17 @@ BASE = [frame(9, 1, 1040), frame(9, 2, 5028), frame(9, 3, 1040),
 
 def test_pq1_prefix_and_midnight():
     bare = "[timing] 23:59:59.500 queue head seq=1 cmd=1 down=1 size=1 f=1"
-    after = L(86400 + 1.0 - 86400, "queue head seq=2 cmd=1 down=2 size=1 f=1", prefix="")
-    log = pq.parse([bare, PREFIX + "[timing] 00:00:01.000 queue head seq=2 cmd=1 down=2 size=1 f=1", "noise", after])
-    assert [t for t, _, _ in log.heads] == [pytest.approx(86399.5), pytest.approx(86401.0), pytest.approx(86401.0)]
+    prefixed = PREFIX + "[timing] 00:00:01.000 queue head seq=2 cmd=1 down=2 size=1 f=1"
+    log = pq.parse([bare, "noise", prefixed])
+    assert [t for t, _, _ in log.heads] == [pytest.approx(86399.5), pytest.approx(86401.0)]
+
+
+def test_window_spanning_midnight():
+    lines = [frame(86398, 1, 1040), head(86399.0, 1), head(86402.0, 2), empty(86403.0, 2)]
+    log, wins, r = run(lines)
+    assert wins[1].end - wins[1].start == pytest.approx(3.0)
+    assert wins[2].end - wins[2].start == pytest.approx(1.0)
+    assert r.messages[1040]["wait"] == [pytest.approx(1.0)]
 
 
 def test_pq2_windows():
@@ -93,22 +101,28 @@ def test_pq4_gate_signal_and_opener_link():
 
 def test_pq5_queue_end_delay():
     _, _, r = run(BASE + [show(15.3, 3, why="queue-end"), show(14.0, 3, why="model")])
-    assert r.queue_end_delay == [pytest.approx(0.3)]
+    assert r.queue_end_result == [pytest.approx(0.3)]
+    assert r.queue_end_other == {}
     assert sorted(r.result_lag) == [pytest.approx(-0.3), pytest.approx(1.0)]
 
 
 def test_pq6_ratios():
-    lines = BASE + [state(10.0, "live"), state(20.0, "frozen"), state(30.0, "live"), L(40.0, "mark")]
+    lines = BASE + [state(10.0, "live"), state(20.0, "frozen"), state(30.0, "live"),
+                          L(40.0, "queue unmatched cmd=1 down=1 size=1 f=1"), L(90.0, "mark")]
     _, _, r = run(lines)
     assert r.live_ratio == pytest.approx(20 / 30)
     assert r.frozen_ratio == pytest.approx(10 / 30)
+    assert r.span == pytest.approx(30.0)
+    assert "분모" in pq.render(r)
 
 
 def test_pq7_expect_queue_violations():
     live = [state(9.0, "live")]
-    assert run(BASE + live + [show(11.0, 2)], expect=True)[2].violations
+    early = run(BASE + live + [show(11.0, 2)], expect=True)[2].violations
+    assert len(early) == 1 and "ref=2" in early[0]
     assert not run(BASE + live + [show(11.95, 2)], expect=True)[2].violations
-    assert run(BASE + live + [show(14.0, 3, kind="result")], expect=True)[2].violations
+    late = run(BASE + live + [show(14.0, 3, kind="result")], expect=True)[2].violations
+    assert len(late) == 1 and "ref=3" in late[0] and "cmd=1040" in late[0]
     assert not run(BASE + live + [show(14.95, 3, kind="result")], expect=True)[2].violations
 
     outside = [state(9.0, "frozen")]
@@ -141,3 +155,57 @@ def test_pq9_early_results_by_cmd():
     assert max(r.result_early[1040]) == pytest.approx(1.0)
     text = pq.render(r)
     assert "cmd 1040 2건" in text
+
+
+def test_queue_end_gate_lines_measured_separately():
+    gate_line = L(15.2, "gate release kind=pk by=signal waited=0ms grp=1 ref=3 why=queue-end")
+    _, _, r = run(BASE + [show(15.1, 2, kind="dice", why="queue-end"), gate_line])
+    assert r.queue_end_result == []
+    assert r.queue_end_other["gate pk"] == [pytest.approx(0.2)]
+    assert r.queue_end_other["show dice"] == [pytest.approx(3.1)]
+    text = pq.render(r)
+    assert "공개 gate pk" in text and "공개 show dice" in text
+
+
+def test_signal_gate_without_window_counts_unknown():
+    _, _, r = run(BASE + [gate(11.0, "turn", "signal", 99)])
+    assert r.gates["turn"] == {"in": 0, "out": 0, "unknown": 1}
+
+
+def test_expect_queue_without_rule_period_exits_2(tmp_path):
+    path = tmp_path / "LogOutput.log"
+    path.write_text(chr(10).join(BASE + [show(11.0, 2)]), encoding="utf-8")
+    assert pq.main([str(path)]) == 0
+    assert pq.main([str(path), "--expect-queue"]) == 2
+
+
+def test_never_ended_item_reported_not_judged():
+    lines = [frame(9, 1, 1040), head(10.0, 1), state(9.0, "live"), show(9.9, 1)]
+    _, wins, r = run(lines, expect=True)
+    assert wins[1].end is None
+    assert r.open_items == 1 and r.unknown_end == 1
+    assert [v for v in r.violations if "cmd=" in v] == []
+
+
+def test_immediate_frame_and_dash_ref_ignored():
+    lines = [frame(9, 1, 1040), L(9, "frame cmd=5004 HeartBeat up=0 down=9 err=0 len=1 seq=- grp=2"),
+             head(10.0, 1), empty(11.0, 1), state(9.0, "live"), show(5.0, None)]
+    log, wins, r = run(lines, expect=True)
+    assert list(log.frames) == [1] and list(wins) == [1]
+    assert r.violations == [] and r.early == {}
+
+
+def test_truncated_lines_skipped():
+    lines = [L(1, "queue head seq=1"), L(1, "queue head cmd=1"), L(1, "queue unmatched size=1"),
+             L(1, "queue link seq=1 end=-"), L(1, "queue empty done="), L(1, "frame cmd= seq=1"),
+             head(2.0, 1, 7)]
+    log = pq.parse(lines)
+    assert len(log.heads) == 1 and not log.links and not log.unmatched and not log.empties
+    assert not log.frames
+
+
+def test_messages_table_flag(tmp_path):
+    log, wins, r = run(BASE)
+    assert "seq  cmd" not in pq.render(r)
+    text = pq.render(r, messages=True)
+    assert "seq  cmd" in text and "12.000" in text
