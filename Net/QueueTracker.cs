@@ -9,6 +9,8 @@ internal enum QueueRead : byte { Unreadable, Empty, Head }
 
 internal enum QueueMode : byte { Off, Live, Frozen }
 
+internal enum FreezeReason : byte { Unmatched, Unreadable, Reconnect, Exit, Error, Socket }
+
 internal readonly struct QueueObservation
 {
     public readonly QueueRead Kind;
@@ -104,7 +106,7 @@ internal static class QueueTracker
     private static int _tick;
     private static int _frame;
 
-    // 아래는 메인 스레드 전용이다. Apply·BeginFrame·DrainLinks·Snapshot 밖에서 만지지 않는다.
+    // 아래는 메인 스레드 전용이다. Apply·DrainLinks·Health 밖에서 만지지 않는다.
     private static readonly List<Arrival> Pending = new();
     private static long _started;
     private static long _done;
@@ -115,6 +117,7 @@ internal static class QueueTracker
     private static long _frames, _liveFrames, _frozenFrames, _matched, _unmatched, _unreadable, _overflow;
     private static int _size;
     private static long _headNum;
+    private static int _headStartTick;
     private static int _headWait;
     private static (int Cmd, long Down) _lastHead;
     private static bool _hasLastHead;
@@ -137,10 +140,7 @@ internal static class QueueTracker
         lock (Gate)
         {
             _enabled = enabled && !_disabled;
-            if (!_enabled)
-            {
-                changed = TurnOff();
-            }
+            if (!_enabled) changed = TurnOff();
         }
         if (changed) TraceState(QueueMode.Off, "config");
     }
@@ -154,15 +154,13 @@ internal static class QueueTracker
             _enabled = false;
             changed = TurnOff();
         }
-        if (changed) TraceState(QueueMode.Off, "disabled:" + reason);
+        if (changed) TraceState(QueueMode.Off, "disabled", reason);
     }
 
     private static bool TurnOff()
     {
         _intake.Clear();
         _clearRequested = true;
-        _awaitSync = false;
-        _reconnectPending = false;
         return Switch(QueueMode.Off);
     }
 
@@ -184,12 +182,12 @@ internal static class QueueTracker
         _ => false,
     };
 
-    public static long Arrive(int cmd, long down, int err = 0)
+    public static long Arrive(int cmd, long down, int err)
     {
         if (!Enabled) return -1;
         int tick = Volatile.Read(ref _tick);
         long num = -1;
-        string? why = null;
+        FreezeReason? why = null;
         bool changed = false;
         lock (Gate)
         {
@@ -201,13 +199,13 @@ internal static class QueueTracker
             if (cmd == 5008)
             {
                 _awaitSync = false;
-                why = "reconnect";
+                why = FreezeReason.Reconnect;
             }
-            else if (cmd == 5012) why = "exit";
-            else if (err != 0) why = "error";
-            if (why != null) changed = Signal(why, raiseReference: true);
+            else if (cmd == 5012) why = FreezeReason.Exit;
+            else if (err != 0) why = FreezeReason.Error;
+            if (why != null) changed = Signal(why.Value, raiseReference: true);
         }
-        if (changed) TraceState(QueueMode.Frozen, why!);
+        if (changed) TraceState(QueueMode.Frozen, Token(why!.Value));
         return num;
     }
 
@@ -220,22 +218,22 @@ internal static class QueueTracker
             // 재연결 중에는 게임이 방 상태를 NONE으로 두고 전투 메시지를 화면 없이 흘려보내므로(OnlineLogic.cs:371),
             // 다음 5008이 와서 기준점이 정해질 때까지 어떤 항목도 풀어 주지 않는다.
             _awaitSync = true;
-            changed = Signal("socket", raiseReference: false);
+            changed = Signal(FreezeReason.Socket, raiseReference: false);
         }
-        if (changed) TraceState(QueueMode.Frozen, "socket");
+        if (changed) TraceState(QueueMode.Frozen, Token(FreezeReason.Socket));
     }
 
-    private static bool Signal(string why, bool raiseReference)
+    private static bool Signal(FreezeReason why, bool raiseReference)
     {
         if (raiseReference && _nextNum > _reference) _reference = _nextNum;
         _reconnectPending = true;
         if (_mode == QueueMode.Off) return false;
         switch (why)
         {
-            case "reconnect": _freezeReconnect++; break;
-            case "exit": _freezeExit++; break;
-            case "error": _freezeError++; break;
-            case "socket": _freezeSocket++; break;
+            case FreezeReason.Reconnect: _freezeReconnect++; break;
+            case FreezeReason.Exit: _freezeExit++; break;
+            case FreezeReason.Error: _freezeError++; break;
+            case FreezeReason.Socket: _freezeSocket++; break;
         }
         return Switch(QueueMode.Frozen);
     }
@@ -253,11 +251,22 @@ internal static class QueueTracker
         return true;
     }
 
-    private static void TraceState(QueueMode mode, string why)
+    private static string Token(FreezeReason why) => why switch
+    {
+        FreezeReason.Unmatched => "unmatched",
+        FreezeReason.Unreadable => "unreadable",
+        FreezeReason.Reconnect => "reconnect",
+        FreezeReason.Exit => "exit",
+        FreezeReason.Error => "error",
+        _ => "socket",
+    };
+
+    private static void TraceState(QueueMode mode, string why, string? detail = null)
     {
         if (!TimingTrace.Enabled) return;
         string name = mode switch { QueueMode.Live => "live", QueueMode.Frozen => "frozen", _ => "off" };
-        TimingTrace.Write($"queue state={name} why={why} f={Volatile.Read(ref _frame)}");
+        string extra = detail is null ? "" : " detail=" + detail.Replace(' ', '_');
+        TimingTrace.Write($"queue state={name} why={why}{extra} f={Volatile.Read(ref _frame)}");
     }
 
     public static void NoteGroup(long group, long arrival, int cmd)
@@ -388,7 +397,8 @@ internal static class QueueTracker
 
         foreach (var a in _swap)
         {
-            // 방 속도 2에서는 몬스터 주사위 연출을 건너뛰어 눈이 걷기로만 드러나므로, 열린 메시지의 끝은 뒤따르는 걷기의 끝이다.
+            // 열린 메시지의 끝은 뒤따르는 걷기의 끝이다. 5022는 방 속도 2에서 몬스터 주사위 연출을 건너뛰어 눈이 걷기로만 드러나고,
+            // 1096은 처리기가 효과를 저장만 하고 걷기가 칸마다 보여 주며, 5044는 이동량이 걷기로 드러난다.
             if (Open.Count > 0)
             {
                 if (a.Cmd == 5028) CloseAll(a.Num, frame);
@@ -438,24 +448,23 @@ internal static class QueueTracker
         Pending.RemoveRange(0, count);
     }
 
-    private static void Freeze(string why)
+    private static void Freeze(FreezeReason why)
     {
         bool changed;
         lock (Gate)
         {
             if (_mode == QueueMode.Live)
             {
-                if (why == "unmatched") _freezeUnmatched++;
+                if (why == FreezeReason.Unmatched) _freezeUnmatched++;
                 else _freezeUnreadable++;
             }
             changed = Switch(QueueMode.Frozen);
         }
-        if (changed) TraceState(QueueMode.Frozen, why);
+        if (changed) TraceState(QueueMode.Frozen, Token(why));
     }
 
     private static void ResetHead()
     {
-        _headNum = 0;
         _headWait = 0;
         _hasLastHead = false;
     }
@@ -466,12 +475,13 @@ internal static class QueueTracker
         _emptyRun = 0;
         ResetHead();
         _hasLastUnmatched = false;
-        Freeze("unreadable");
+        Freeze(FreezeReason.Unreadable);
     }
 
     private static void OnEmpty(int tick, int frame)
     {
         ResetHead();
+        _headNum = 0;
         _hasLastUnmatched = false;
         if (++_emptyRun < EmptyTicksToResume) return;
 
@@ -512,7 +522,7 @@ internal static class QueueTracker
             _lastUnmatched = (obs.Cmd, obs.Down);
             _hasLastUnmatched = true;
             ResetHead();
-            Freeze("unmatched");
+            Freeze(FreezeReason.Unmatched);
             return;
         }
 
@@ -526,8 +536,9 @@ internal static class QueueTracker
         if (_headNum != head.Num)
         {
             _headNum = head.Num;
-            _headWait = tick - head.Tick;
+            _headStartTick = tick;
         }
+        _headWait = _headStartTick - head.Tick;
 
         Finish(idx);
         if (head.Num > _started) _started = head.Num;
@@ -573,6 +584,7 @@ internal static class QueueTracker
             _frames = _liveFrames = _frozenFrames = _matched = _unmatched = _unreadable = _overflow = 0;
             _size = 0;
             _headNum = 0;
+            _headStartTick = 0;
             _headWait = 0;
             _hasLastHead = false;
             _hasLastUnmatched = false;
