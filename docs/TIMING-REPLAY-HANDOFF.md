@@ -84,7 +84,10 @@ item: itemId, signal(line|advance|page|sync|clear), kind, group, units,
 control: controlId, op(reset|discard), genBefore, genAfter, nowUs
 signal: signalId, atUs, gen, kind, pip, on, instanceId
 env: op(hook-success|hookfail|hook-disabled|fallback|forget-banner), nowUs
+queue-ref: itemId, ref(도착 기준 번호), flags(1=result 2=opener)   -- item 바로 뒤에 기록
 pump-begin: pumpId, nowUs, mode(gated|model), observedGen
+queue: mode(추적 모드), startedThrough, doneThrough   -- 값이 바뀐 펌프에만, pump-begin 바로 뒤
+queue-link: opener(열린 메시지의 도착 번호), end(끝 기준 도착 번호)
 take: pumpId, itemRef
 signal-take: pumpId, signalRef
 decision: pumpId, itemRef, causeRef, leaderItemRef, action, reason,
