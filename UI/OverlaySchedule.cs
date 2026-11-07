@@ -87,6 +87,9 @@ internal static partial class OverlaySchedule
     private static readonly Stopwatch FallbackClock = Stopwatch.StartNew();
     private static long _fallbackLastUs;
 
+    // 원시 틱에 100만을 곱하면 게임을 약 10.7일 켜 둔 뒤 넘치므로 100ns 단위 경과 시간을 나눈다.
+    private static long WallUs() => FallbackClock.Elapsed.Ticks / 10;
+
     private static long _nowUs;
     private static float _speed = 1f;
     private static int _generation;
@@ -135,7 +138,7 @@ internal static partial class OverlaySchedule
     public static void Tick(float unscaledDelta, float maxDelta, float timeScale)
     {
         _touched = true;
-        long wall = FallbackClock.ElapsedTicks * 1_000_000L / Stopwatch.Frequency;
+        long wall = WallUs();
         bool fallback = unscaledDelta < 0;
         double dt = fallback ? (wall - _fallbackLastUs) / 1_000_000.0 : unscaledDelta;
         _fallbackLastUs = wall;
