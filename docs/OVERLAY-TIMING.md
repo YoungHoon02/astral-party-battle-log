@@ -241,9 +241,11 @@ v0.3.1에서 `Diagnostics.ScreenProbe`(bool)로 다시 넣었다(`UI/ScreenRecor
   (최악 46ms → 1.3ms) 하나뿐이다.
 - **게임 코드에 쓸 만한 상수가 없다.** 연출 대기는 대부분 변수·에셋(타임라인) 값이다.
   `GachaDiceManager._DiceShowTime = 1000`은 **가챠** 주사위라 전투와 무관하다.
-- **네트워크 계층에 순차 큐가 없다.** `RPCMsgManager.ReceiveRPCCallStatic`은 패킷마다
-  `UniTaskExtensions.Forget(DealOnPushRPCMsg(...))`로 핸들러를 바로 띄운다. 연출 순서는
-  각 게임 로직이 알아서 정한다.
+- **네트워크 계층에 순차 큐가 있다** (2026-11-07 바로잡음. 처음에는 "없다"고 적었다).
+  `RPCMsgManager.ReceiveRPCCallStatic`이 패킷마다 `UniTaskExtensions.Forget(DealOnPushRPCMsg(...))`를
+  부르는 것은 맞다. 하지만 `DealOnPushRPCMsg`는 하트비트·채팅·방 동기화 등 9종을 빼면 메시지를
+  `_OnPushRPCMsg` 목록에 넣기만 하고, `ProcessNextPushRPCMsg`가 맨 앞 메시지의 처리기를 끝까지 기다린 뒤
+  다음 메시지를 꺼낸다. 이 조사에 쓴 2026-09-14 빌드도 같은 구조라, 게임이 바뀐 것이 아니라 잘못 읽은 것이다.
 
 ### 현재 모델을 검증하는 법
 
