@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 TIMING = re.compile(r"\[timing\] (\d\d):(\d\d):(\d\d)\.(\d{3}) (.*)")
 KV = re.compile(r"(\w+)=(\S+)")
 
+# Net/QueueTracker.cs의 결과·열린 메시지 명령 목록과 같게 유지한다.
 RESULT_CMDS = {1040, 1013, 1096, 5044}
 OPENER_CMDS = {5022, 1096, 5044}
 FROZEN_RULE_SECONDS = 60.0

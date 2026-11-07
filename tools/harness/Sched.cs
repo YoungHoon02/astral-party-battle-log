@@ -314,6 +314,39 @@ static class Sched
         return _fail;
     }
 
+    static readonly System.Text.RegularExpressions.Regex ShownLine =
+        new(@"^\d\d:\d\d:\d\d\.\d{3} \(수신 \d\d:\d\d:\d\d\.\d{3}\) (.+)$");
+    static readonly System.Text.RegularExpressions.Regex UnshownLine =
+        new(@"^미표시 \(수신 \d\d:\d\d:\d\d\.\d{3}\) (.+)$");
+
+    static string? Body(System.Text.RegularExpressions.Regex shape, string line) =>
+        shape.Match(line) is { Success: true } m ? m.Groups[1].Value : null;
+
+    static long _fileUs;
+
+    // 파일을 닫고 읽은 뒤에 보류 줄을 비우므로, 끝까지 보류된 줄은 돌려준 내용에 없다.
+    static string[] WithFileClock(string path, Action<LogFileWriter> body)
+    {
+        File.WriteAllText(path, "");
+        var writer = new LogFileWriter(path, _ => { });
+        Func<long> real = OverlaySchedule.FileClockUs;
+        _fileUs = 0;
+        OverlaySchedule.FileClockUs = () => _fileUs;
+        try
+        {
+            body(writer);
+            writer.Close();
+            return File.ReadAllLines(path);
+        }
+        finally
+        {
+            OverlaySchedule.FileClockUs = real;
+            OverlaySchedule.FlushFile();
+            OverlaySchedule.AttachFile(null);
+            Out.Clear();
+        }
+    }
+
     // battle-log.txt가 받은 즉시가 아니라 오버레이에 나간 순서·시각으로 쓰이는지.
     public static int FileTiming(string file)
     {
@@ -353,43 +386,24 @@ static class Sched
         Out.Clear();
 
         string[] got = File.ReadAllLines(file);
-        var shown = new System.Text.RegularExpressions.Regex(@"^\d\d:\d\d:\d\d\.\d{3} \(수신 \d\d:\d\d:\d\d\.\d{3}\) atk$");
-        var unshown = new System.Text.RegularExpressions.Regex(@"^미표시 \(수신 \d\d:\d\d:\d\d\.\d{3}\) (left|exit)$");
-        var rule = new System.Text.RegularExpressions.Regex(@"^\d\d:\d\d:\d\d\.\d{3} \(수신 \d\d:\d\d:\d\d\.\d{3}\) ─+ Round 2 ─+$");
         Check($"F4 새 판 비우기는 큐 순서대로 — 지난 판 줄이 남지 않음 ({got.Length}줄)",
               got.Length == 4 && !Array.Exists(got, l => l.Contains("지난 판") || l.EndsWith(" old")));
         Check($"F5 출력된 줄과 라운드 구분선은 출력 시각과 수신 시각을 함께 적음: {(got.Length > 1 ? got[1] : "")}",
-              heldOnScreen && got.Length == 4 && shown.IsMatch(got[0]) && rule.IsMatch(got[1]));
+              heldOnScreen && got.Length == 4 && Body(ShownLine, got[0]) == "atk"
+              && System.Text.RegularExpressions.Regex.IsMatch(Body(ShownLine, got[1]) ?? "", "^─+ Round 2 ─+$"));
         Check("F6 판을 나가 버려진 줄과 종료 때 대기 중인 줄은 미표시로 남음",
-              got.Length == 4 && unshown.IsMatch(got[2]) && got[2].EndsWith("left")
-              && unshown.IsMatch(got[3]) && got[3].EndsWith("exit"));
+              got.Length == 4 && Body(UnshownLine, got[2]) == "left" && Body(UnshownLine, got[3]) == "exit");
 
-        string stallFile = file + ".stall";
-        File.WriteAllText(stallFile, "");
-        var stallWriter = new LogFileWriter(stallFile, _ => { });
-        Func<long> realClock = OverlaySchedule.FileClockUs;
-        long fileUs = 0;
-        OverlaySchedule.FileClockUs = () => fileUs;
-        string[] stalled;
-        try
+        string[] stalled = WithFileClock(file + ".stall", stallWriter =>
         {
             Setup(log);
             OverlaySchedule.AttachFile(stallWriter);
             OverlaySchedule.Line("OLD", LineKind.Attack, 1, 0);
-            fileUs = 75_000_000;
+            _fileUs = 75_000_000;
             OverlaySchedule.Line("YOUNG", LineKind.Attack, 2, 0);
-            fileUs = 130_000_000;
+            _fileUs = 130_000_000;
             OverlaySchedule.Line("NEW", LineKind.Attack, 3, 0);
-            stallWriter.Close();
-            stalled = File.ReadAllLines(stallFile);
-        }
-        finally
-        {
-            OverlaySchedule.FileClockUs = realClock;
-            OverlaySchedule.FlushFile();
-            OverlaySchedule.AttachFile(null);
-            Out.Clear();
-        }
+        });
         Check($"F7 펌프가 60초 넘게 멈춰도 130초 된 줄만 미표시로 쓰고 55초 된 줄은 보류한다 ({string.Join(" | ", stalled)})",
               stalled.Length == 1 && stalled[0].StartsWith("미표시 (수신 ") && stalled[0].EndsWith(" OLD"));
         return fail;
@@ -486,19 +500,23 @@ static class Sched
         void Hit(byte[] first, byte[] second) =>
             lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 100), PkCause(), first, second));
 
+        string Seq(long? pkGroup = null) => string.Join("|", got.ConvertAll(x =>
+            (pkGroup is null ? "" : x.Group == pkGroup ? "pk:" : "own:")
+            + (x.Text.Contains("HP") ? "hp" : x.Text.Contains("골드") ? "gold" : "head")));
+
         lg.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), PkBattle());
         long pk = got[0].Group;
         got.Clear();
 
         Hit(PkEffect(200, hp: false, gold: true), PkEffect(200, hp: true, gold: false));
-        string seq = string.Join("|", got.ConvertAll(x => (x.Group == pk ? "pk" : "own") + (x.Text.Contains("HP") ? ":hp" : x.Text.Contains("골드") ? ":gold" : ":head")));
+        string seq = Seq(pk);
         bool ok = seq == "pk:hp|own:gold" && got[1].Group == pk + 1;
         Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK1 골드→체력 순서로 와도 체력은 PK 그룹으로 먼저, 골드는 자기 그룹으로 뒤에: {seq}");
         if (!ok) _fail++;
 
         got.Clear();
         Hit(PkEffect(200, hp: true, gold: false), PkEffect(200, hp: false, gold: true));
-        seq = string.Join("|", got.ConvertAll(x => (x.Group == pk ? "pk" : "own") + (x.Text.Contains("HP") ? ":hp" : x.Text.Contains("골드") ? ":gold" : ":head")));
+        seq = Seq(pk);
         ok = seq == "pk:hp|own:gold";
         Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK2 체력→골드 순서도 같다: {seq}");
         if (!ok) _fail++;
@@ -525,7 +543,7 @@ static class Sched
         byte[] cardCause = Frame.Msg(2, Frame.Cat(Frame.Varint(1, 7), Frame.Fix64(3, 0)));
         lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 100), cardCause,
                    PkEffect(100, hp: true, gold: true), PkEffect(200, hp: true, gold: true)));
-        seq = string.Join("|", got.ConvertAll(x => x.Text.Contains("HP") ? "hp" : x.Text.Contains("골드") ? "gold" : "head"));
+        seq = Seq();
         ok = seq == "head|gold|hp|gold|hp" && got.TrueForAll(x => x.Group == got[0].Group);
         Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK5 PK가 아닌 원인은 대상별 원래 순서와 자기 그룹을 그대로 둔다: {seq}");
         if (!ok) _fail++;
@@ -536,7 +554,7 @@ static class Sched
         got.Clear();
         lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 100), PkCause(),
                    PkEffect(100, hp: false, gold: true), PkEffect(200, hp: true, gold: false)));
-        seq = string.Join("|", got.ConvertAll(x => (x.Group == pk2 ? "pk" : "own") + ":" + (x.Text.Contains("HP") ? "hp" : x.Text.Contains("골드") ? "gold" : "head")));
+        seq = Seq(pk2);
         ok = seq == "pk:hp|own:gold";
         Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} PK6 PK 원인 단독 1040에서도 체력만 PK 그룹: {seq}");
         if (!ok) _fail++;
@@ -613,6 +631,12 @@ static class Sched
             void Dice(BattleLogger lg) =>
                 lg.OnFrame(new FrameHeader(Op.ThrowDice, 0, 0, 0), Frame.Cat(Frame.Varint(1, 6), Frame.Fix64(3, Char)));
 
+            void Roster(BattleLogger lg) =>
+                lg.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Frame.Msg(1, Frame.Cat(
+                    Frame.Fix64(1, 77),
+                    Frame.Msg(9, Frame.Cat(Frame.Fix64(1, Char), Frame.Varint(6, 0), Frame.Msg(10, Frame.Fix64(2, 1001)))),
+                    Frame.Msg(10, Frame.Cat(Frame.Fix64(1, Monster), Frame.Msg(10, Frame.Fix64(2, 5001)))))));
+
             {
                 var (lg, lines) = Start();
                 Dice(lg);
@@ -640,10 +664,7 @@ static class Sched
 
             {
                 var (lg, lines) = Start();
-                lg.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Frame.Msg(1, Frame.Cat(
-                    Frame.Fix64(1, 77),
-                    Frame.Msg(9, Frame.Cat(Frame.Fix64(1, Char), Frame.Varint(6, 0), Frame.Msg(10, Frame.Fix64(2, 1001)))),
-                    Frame.Msg(10, Frame.Cat(Frame.Fix64(1, Monster), Frame.Msg(10, Frame.Fix64(2, 5001)))))));
+                Roster(lg);
                 Dice(lg);
                 Dice(lg);
                 int before = lines.Count;
@@ -677,10 +698,7 @@ static class Sched
 
             {
                 var (lg, lines) = Start();
-                lg.OnFrame(new FrameHeader(Op.RunningGame, 0, 0, 0), Frame.Msg(1, Frame.Cat(
-                    Frame.Fix64(1, 77),
-                    Frame.Msg(9, Frame.Cat(Frame.Fix64(1, Char), Frame.Varint(6, 0), Frame.Msg(10, Frame.Fix64(2, 1001)))),
-                    Frame.Msg(10, Frame.Cat(Frame.Fix64(1, Monster), Frame.Msg(10, Frame.Fix64(2, 5001)))))));
+                Roster(lg);
                 lg.OnFrame(new FrameHeader(Op.Battle, 0, 0, 0), PkBattle());
                 int before = lines.Count;
                 lg.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 0), Frame.Cat(Frame.Fix64(1, Char), PkCause(),
@@ -1099,13 +1117,7 @@ static class Sched
 
     static void Qs15(ManualLogSource log)
     {
-        string path = Path.Combine(Path.GetTempPath(), "apbl-harness-queue-file.txt");
-        File.WriteAllText(path, "");
-        var writer = new LogFileWriter(path, _ => { });
-        Func<long> clock = OverlaySchedule.FileClockUs;
-        long fileUs = 0;
-        OverlaySchedule.FileClockUs = () => fileUs;
-        try
+        string[] got = WithFileClock(Path.Combine(Path.GetTempPath(), "apbl-harness-queue-file.txt"), writer =>
         {
             QStart(log);
             OverlaySchedule.AttachFile(writer);
@@ -1114,7 +1126,7 @@ static class Sched
             QHead(1);
             for (int i = 0; i < 130; i++)
             {
-                fileUs += 1_000_000;
+                _fileUs += 1_000_000;
                 Advance(1.0);
             }
             QLine("X", LineKind.Card, QMsg(5056));
@@ -1122,24 +1134,12 @@ static class Sched
             QHead(3);
             QExpect("QS15 처리가 끝나면 결과 줄, 시작되면 카드 줄", "R:queue-end", "X:queue-start");
             QLine("A", LineKind.Card, QMsg(5056));
-            fileUs += 121_000_000;
+            _fileUs += 121_000_000;
             QLine("B", LineKind.Card, QMsg(5056));
             QHead(5);
-            Out.Clear();
-        }
-        finally
-        {
-            OverlaySchedule.FileClockUs = clock;
-            OverlaySchedule.FlushFile();
-            OverlaySchedule.AttachFile(null);
-            writer.Close();
-        }
+        });
 
-        string[] got = File.ReadAllLines(path);
-        var shown = new System.Text.RegularExpressions.Regex(@"^\d\d:\d\d:\d\d\.\d{3} \(수신 \d\d:\d\d:\d\d\.\d{3}\) ([A-Z])$");
-        var unshown = new System.Text.RegularExpressions.Regex(@"^미표시 \(수신 \d\d:\d\d:\d\d\.\d{3}\) ([A-Z])$");
-        string Shape(string l) => shown.Match(l) is { Success: true } s ? "shown " + s.Groups[1].Value
-            : unshown.Match(l) is { Success: true } u ? "unshown " + u.Groups[1].Value : l;
+        string Shape(string l) => Body(ShownLine, l) is { } s ? "shown " + s : Body(UnshownLine, l) is { } u ? "unshown " + u : l;
         string seq = string.Join(", ", Array.ConvertAll(got, Shape));
         bool ok = seq == "shown R, shown X, unshown A, shown B";
         Console.WriteLine($"  {(ok ? "OK  " : "FAIL")} QS15 펌프가 도는 동안 130초 기다린 결과 줄은 미표시로 쓰지 않고 나갈 때 쓰며, "

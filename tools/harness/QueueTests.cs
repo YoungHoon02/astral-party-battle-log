@@ -61,6 +61,9 @@ static class QueueTests
 
     static string Show(QueueSnapshot s) => $"mode={s.Mode} started={s.StartedThrough} done={s.DoneThrough}";
 
+    static BattleLogger NewLogger(ManualLogSource log) =>
+        new(log, null, false, new HashSet<int>(), false, true, NameTable.Load("", _ => { }));
+
     public static int Run()
     {
         _fail = 0;
@@ -361,8 +364,7 @@ static class QueueTests
         Check(c1 && c2 && QueueTracker.Snapshot().Mode == QueueMode.Live, "QT23 소켓이 끊긴 채 껐다 켜도 5008과 그 뒤 항목 없이는 켜지지 않는다", $"{c1}/{c2}");
 
         Start();
-        var logger = new BattleLogger(new ManualLogSource("queue"), null, false, new HashSet<int>(), false, true,
-                                      NameTable.Load("", _ => { }));
+        var logger = NewLogger(new ManualLogSource("queue"));
         logger.OnFrame(new FrameHeader(Op.MatchSuccess, 0, 0, 21), Array.Empty<byte>());
         logger.OnFrame(new FrameHeader(5028, 0, 0, 22), Array.Empty<byte>());
         logger.OnFrame(new FrameHeader(5004, 0, 0, 23), Array.Empty<byte>());
@@ -384,7 +386,7 @@ static class QueueTests
         var levels = new LevelListener();
         BepInEx.Logging.Logger.Listeners.Add(levels);
         TimingTrace.Init(traceLog, true);
-        var tracer = new BattleLogger(traceLog, null, false, new HashSet<int>(), false, true, NameTable.Load("", _ => { }));
+        var tracer = NewLogger(traceLog);
         tracer.OnFrame(new FrameHeader(5004, 0, 0, 31), Array.Empty<byte>());
         tracer.OnFrame(new FrameHeader(5028, 0, 0, 32), Array.Empty<byte>());
         tracer.OnFrame(new FrameHeader(Op.UpdateHeroAttr, 0, 0, 33), Array.Empty<byte>());
