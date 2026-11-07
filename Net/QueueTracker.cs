@@ -125,10 +125,8 @@ internal static class QueueTracker
     private static long _headNum;
     private static int _headStartTick;
     private static int _headWait;
-    private static (int Cmd, long Down) _lastHead;
-    private static bool _hasLastHead;
-    private static (int Cmd, long Down) _lastUnmatched;
-    private static bool _hasLastUnmatched;
+    private static (int Cmd, long Down)? _lastHead;
+    private static (int Cmd, long Down)? _lastUnmatched;
 
     private static readonly Dictionary<long, (long Arrival, int Cmd)> Groups = new();
     private static readonly Queue<long> GroupOrder = new();
@@ -467,8 +465,8 @@ internal static class QueueTracker
         _emptyRun = 0;
         _headNum = 0;
         _headWait = 0;
-        _hasLastHead = false;
-        _hasLastUnmatched = false;
+        _lastHead = null;
+        _lastUnmatched = null;
     }
 
     private static void Finish(int count)
@@ -498,7 +496,7 @@ internal static class QueueTracker
     private static void ResetHead()
     {
         _headWait = 0;
-        _hasLastHead = false;
+        _lastHead = null;
     }
 
     private static void OnUnreadable()
@@ -506,7 +504,7 @@ internal static class QueueTracker
         _unreadable++;
         _emptyRun = 0;
         ResetHead();
-        _hasLastUnmatched = false;
+        _lastUnmatched = null;
         Freeze(FreezeReason.Unreadable);
     }
 
@@ -514,7 +512,7 @@ internal static class QueueTracker
     {
         ResetHead();
         _headNum = 0;
-        _hasLastUnmatched = false;
+        _lastUnmatched = null;
         if (++_emptyRun < EmptyTicksToResume) return;
 
         long nowUs = ClockUs();
@@ -550,22 +548,20 @@ internal static class QueueTracker
         if (idx < 0)
         {
             _unmatched++;
-            if (TimingTrace.Enabled && (!_hasLastUnmatched || _lastUnmatched != (obs.Cmd, obs.Down)))
+            if (TimingTrace.Enabled && _lastUnmatched != (obs.Cmd, obs.Down))
                 TimingTrace.Write($"queue unmatched cmd={obs.Cmd} down={obs.Down} size={obs.Size} f={frame}");
             _lastUnmatched = (obs.Cmd, obs.Down);
-            _hasLastUnmatched = true;
             ResetHead();
             Freeze(FreezeReason.Unmatched);
             return;
         }
 
         _matched++;
-        _hasLastUnmatched = false;
+        _lastUnmatched = null;
         var head = Pending[idx];
-        if (TimingTrace.Enabled && (!_hasLastHead || _lastHead != (obs.Cmd, obs.Down)))
+        if (TimingTrace.Enabled && _lastHead != (obs.Cmd, obs.Down))
             TimingTrace.Write($"queue head seq={head.Num} cmd={obs.Cmd} down={obs.Down} size={obs.Size} f={frame}");
         _lastHead = (obs.Cmd, obs.Down);
-        _hasLastHead = true;
         if (_headNum != head.Num)
         {
             _headNum = head.Num;
@@ -611,19 +607,13 @@ internal static class QueueTracker
             _freezeUnmatched = _freezeUnreadable = _freezeReconnect = _freezeExit = _freezeError = _freezeSocket = 0;
             _tick = 0;
             _frame = 0;
-            Pending.Clear();
+            ClearInternal();
             _started = 0;
             _done = 0;
-            Open.Clear();
             Links.Clear();
-            _emptyRun = 0;
             _frames = _liveFrames = _frozenFrames = _matched = _unmatched = _unreadable = _overflow = 0;
             _size = 0;
-            _headNum = 0;
             _headStartTick = 0;
-            _headWait = 0;
-            _hasLastHead = false;
-            _hasLastUnmatched = false;
         }
         lock (GroupGate)
         {

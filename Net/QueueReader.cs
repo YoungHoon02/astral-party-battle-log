@@ -32,7 +32,6 @@ internal static unsafe class QueueReader
 
     private static ManualLogSource? _log;
     private static Phase _phase;
-    private static string _reason = "";
     private static int _retryIn;
 
     private static IntPtr _netManager, _rpcClass, _listClass, _dataClass;
@@ -50,7 +49,6 @@ internal static unsafe class QueueReader
         QueueTracker.Disable(reason);
         if (_phase == Phase.Disabled) return;
         _phase = Phase.Disabled;
-        _reason = reason;
         if (running) _log?.LogWarning($"[queue] 대기열 읽기를 이번 실행 동안 끈다: {reason}");
     }
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using AstralPartyBattleLog.Net;
 
 namespace AstralPartyBattleLog.UI;
@@ -26,7 +27,6 @@ internal static partial class OverlaySchedule
     private static QueueSnapshot _recordedQ;
     private static readonly Dictionary<long, long> Links = new();
     private static readonly List<(long Opener, long End)> NewLinks = new();
-    private static readonly List<long> StaleLinks = new();
     private static long _frozenSinceUs = long.MinValue;
     private static bool _queueActive;
 
@@ -67,10 +67,7 @@ internal static partial class OverlaySchedule
     private static void PruneLinks()
     {
         long floor = _q.DoneThrough - MaxLinks;
-        foreach (long opener in Links.Keys)
-            if (opener < floor) StaleLinks.Add(opener);
-        foreach (long opener in StaleLinks) Links.Remove(opener);
-        StaleLinks.Clear();
+        foreach (long opener in Links.Keys.Where(k => k < floor).ToArray()) Links.Remove(opener);
     }
 
     private static bool Queued(in Item item) => _queueActive && item.Ref >= 0;

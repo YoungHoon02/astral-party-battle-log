@@ -16,8 +16,10 @@ internal static partial class OverlaySchedule
     private const long FileStallMarginUs = 60_000_000;
     private const long FileUnshownAgeUs = 120_000_000;
 
+    private readonly record struct PendingLine(DateTime At, long AtUs, string Text);
+
     private static readonly object FileGate = new();
-    private static readonly SortedDictionary<long, (DateTime At, long AtUs, string Text)> FilePending = new();
+    private static readonly SortedDictionary<long, PendingLine> FilePending = new();
     private static LogFileWriter? _file;
     private static long _fileKeys;
 
@@ -58,7 +60,7 @@ internal static partial class OverlaySchedule
                 if (old is not null) foreach (long k in old) FilePending.Remove(k);
             }
             long next = ++_fileKeys;
-            FilePending[next] = (now, nowUs, Palette.Strip(text));
+            FilePending[next] = new PendingLine(now, nowUs, Palette.Strip(text));
             return next;
         }
     }
@@ -68,7 +70,7 @@ internal static partial class OverlaySchedule
         if (key == 0) return;
         lock (FileGate)
         {
-            if (!FilePending.Remove(key, out (DateTime At, long AtUs, string Text) entry)) return;
+            if (!FilePending.Remove(key, out PendingLine entry)) return;
             if (shown) _file?.AppendShown(entry.Text, entry.At);
             else _file?.AppendUnshown(entry.Text, entry.At);
         }
@@ -85,7 +87,7 @@ internal static partial class OverlaySchedule
     {
         lock (FileGate)
         {
-            foreach ((DateTime at, _, string text) in FilePending.Values) _file?.AppendUnshown(text, at);
+            foreach (PendingLine entry in FilePending.Values) _file?.AppendUnshown(entry.Text, entry.At);
             FilePending.Clear();
         }
     }

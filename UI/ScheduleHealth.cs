@@ -56,10 +56,9 @@ internal static class ScheduleHealth
         public readonly SortedDictionary<int, long> Speeds = new();
         public int MaxQueue;
         public long MaxWaitUs;
-        public QueueHealth QueueStart;
+        public QueueHealth? QueueStart;
         public QueueHealth QueueLast;
         public bool QueueSeen;
-        public bool QueueBased;
         public int QueueMaxSize;
         public int QueueMaxWait;
     }
@@ -223,11 +222,7 @@ internal static class ScheduleHealth
             if (_active is null) return;
             Observation o = _active;
             // 추적이 꺼진 채 열린 판은 시작 값이 없으므로, 판 도중 처음 받은 값을 시작점으로 삼는다.
-            if (!o.QueueBased)
-            {
-                o.QueueStart = health;
-                o.QueueBased = true;
-            }
+            o.QueueStart ??= health;
             o.QueueSeen = true;
             o.QueueLast = health;
             o.QueueMaxSize = Math.Max(o.QueueMaxSize, health.Size);
@@ -260,11 +255,7 @@ internal static class ScheduleHealth
             Number = ++_numbers, Gen = gen, Partial = partial, Counts = new long[CountKinds],
         };
         _speedAccUs = 0;
-        if (_queueLatestValid)
-        {
-            _active.QueueStart = _queueLatest;
-            _active.QueueBased = true;
-        }
+        if (_queueLatestValid) _active.QueueStart = _queueLatest;
     }
 
     private static void CloseLocked(string why)
@@ -323,7 +314,7 @@ internal static class ScheduleHealth
             sb.Append(" | queue off");
             return;
         }
-        QueueHealth a = o.QueueStart, b = o.QueueLast;
+        QueueHealth a = o.QueueStart.GetValueOrDefault(), b = o.QueueLast;
         long frames = b.Frames - a.Frames;
         sb.Append(" | queue live=").Append(Percent(b.LiveFrames - a.LiveFrames, frames))
           .Append("% frozen=").Append(Percent(b.FrozenFrames - a.FrozenFrames, frames))

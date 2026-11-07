@@ -41,8 +41,7 @@ internal static partial class OverlaySchedule
 
         public static void Attach(IReplaySink sink)
         {
-            _sink = sink;
-            _recording = true;
+            Swap(sink);
             _readQueue = () => _queue;
             _pushQueueHealth = () => { };
             _drainLinks = into =>

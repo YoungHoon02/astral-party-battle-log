@@ -92,7 +92,6 @@ internal sealed class BattleLogger
     private readonly Dictionary<long, (int Index, int Count)> _downFold = new();
     private static readonly TimeSpan DownWindow = TimeSpan.FromSeconds(3);
 
-    private bool _finishPending;
     private long _finishGroup = -1;
     private LineKind _finishKind;
 
@@ -178,12 +177,12 @@ internal sealed class BattleLogger
         _detail = 0;
         _kindFromCause = cmdId == Op.UpdateHeroAttr;
 
-        if (_finishPending && cmdId is not (Op.UpdateHeroAttr or Op.HeroSkillMoveEffect or Op.LandBuffs))
+        if (_finishGroup >= 0 && cmdId is not (Op.UpdateHeroAttr or Op.HeroSkillMoveEffect or Op.LandBuffs))
         {
-            _finishPending = false;
-            FlushGold();
-            EmitLine("──────── 게임 종료 ────────", _finishKind, _finishGroup);
+            long finishGroup = _finishGroup;
             _finishGroup = -1;
+            FlushGold();
+            EmitLine("──────── 게임 종료 ────────", _finishKind, finishGroup);
         }
 
         if (header.UpSn != 0 && Op.TimingSync.Contains(cmdId)) MirrorSync?.Invoke(cmdId, body.Length);
@@ -258,7 +257,6 @@ internal sealed class BattleLogger
             case Op.Battle: DecodeBattle(body); break;
             case Op.GameFinish:
                 Diag("[game] GameFinish(1016)");
-                _finishPending = true;
                 _finishGroup = _group;
                 _finishKind = _kind;
                 break;
@@ -1629,7 +1627,6 @@ internal sealed class BattleLogger
         _causeNamesRelic = false;
         _downAt.Clear();
         _downFold.Clear();
-        _finishPending = false;
         _finishGroup = -1;
         _msgTargets.Clear();
         _saidCardName = null;
@@ -1651,13 +1648,7 @@ internal sealed class BattleLogger
 
     public void Close() => _file?.Close();
 
-    private void Emit(string line)
-    {
-        FlushGold();
-        EmitLine(line);
-    }
-
-    private void EmitLine(string line) => EmitLine(line, _kind, _group, _units);
+    private void Emit(string line) => EmitIn(line, _group);
 
     private void AdvanceOverlay(LineKind kind)
     {
