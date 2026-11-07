@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
-    "version":  "0.3.5",
-    "downloadUrl":  "https://github.com/YoungHoon02/astral-party-battle-log/releases/download/v0.3.5/AstralPartyBattleLog-v0.3.5.zip",
-    "sha256":  "a74763d5dac7e04783730ebdb7e03c8bb90a47de2dbdd6d3233a35cc97d553f7",
-    "size":  90221
+    "version":  "0.4.0",
+    "downloadUrl":  "https://github.com/YoungHoon02/astral-party-battle-log/releases/download/v0.4.0/AstralPartyBattleLog-v0.4.0.zip",
+    "sha256":  "5913ce1cc89a6797d4e0355e4100093def3a68ee7becd41d84730bfa43644aeb",
+    "size":  101985
 }
