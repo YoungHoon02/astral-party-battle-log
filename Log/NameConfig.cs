@@ -26,8 +26,8 @@ internal static class NameConfig
 
     private static readonly (string Kind, string Info, int Field, string[] Values, string Fallback)[] Enums =
     {
-        // CardInfoConfigure.CardType — 게임은 공격/방어/그 외 셋으로만 칠한다.
-        ("cardtype", "Card", 9, new[] { "", "Attack", "Defend" }, "Other"),
+        // CardInfoConfigure.CardType — 게임은 공격/방어/그 외 셋으로만 칠한다. 건물(9)은 줄 머리말만 다르게 쓴다.
+        ("cardtype", "Card", 9, new[] { "", "Attack", "Defend", "", "", "", "", "", "", "Build" }, "Other"),
         // RelicInfoConfigure.RelicQualityType
         ("relicgrade", "Relic", 2, new[] { "", "Blue", "Purple", "Orange" }, "None"),
     };
@@ -49,11 +49,14 @@ internal static class NameConfig
     private const int ChatMarkTextField = 2;
 
     // 표 구성이 바뀌면 올린다. 옛 names.tsv는 다음 실행에 다시 만들어진다.
-    public const int Schema = 3;
+    public const int Schema = 4;
 
-    // 건물에는 이름표가 없다. 그 건물을 놓는 카드의 이름을 빌린다
-    // (CardInfoConfigure.Params 둘째 값이 건물 id, sint32 zigzag packed).
+    // 건물 이름은 STRBuild(BuildInfoConfigure.NameID=2)에서 읽고, 없으면 그 건물을 놓는 카드의 이름을 빌린다
+    // (CardInfoConfigure.Params 둘째 값이 건물 id, sint32 zigzag packed). STRBuild는 2026-11-12에야 확인한 표라
+    // 없어도 이름표를 다시 만들 수 있게 필수 목록에서 뺐다.
     private const string BuildInfo = "Build";
+    private const string BuildStrings = "STRBuild";
+    private const int BuildNameField = 2;
     private const int CardParams = 20;
     private const int CardBuildingIndex = 1;
 
@@ -63,6 +66,13 @@ internal static class NameConfig
         foreach (var t in Tables) { wanted.Add(t.Info); wanted.Add(t.Strings); }
         foreach (var e in Enums) wanted.Add(e.Info);
         foreach (var sk in Skills) wanted.Add(sk.Info);
+        return wanted;
+    }
+
+    public static HashSet<string> Wanted()
+    {
+        var wanted = Required();
+        wanted.Add(BuildStrings);
         return wanted;
     }
 
@@ -83,7 +93,7 @@ internal static class NameConfig
         foreach ((string kind, string info, int field, string[] values, string fallback) in Enums)
             if (assets.ContainsKey(info))
             foreach ((long id, long value) in ParseValues(assets[info], field).OrderBy(kv => kv.Key))
-                rows.Add((kind, id, value > 0 && value < values.Length ? values[value] : fallback));
+                rows.Add((kind, id, value > 0 && value < values.Length && values[value].Length > 0 ? values[value] : fallback));
 
         var skillNames = rows.Where(r => r.Kind == "skill").ToDictionary(r => r.Id, r => r.Text);
         foreach ((string kind, string info, int[] active, int[] packed) in Skills)
@@ -97,13 +107,21 @@ internal static class NameConfig
                 if (labels.Count > 0) rows.Add((kind, id, string.Join(", ", labels)));
             }
 
+        var named = new HashSet<long>();
+        if (assets.ContainsKey(BuildInfo) && assets.ContainsKey(BuildStrings))
+        {
+            Dictionary<long, string> texts = ParseStrings(assets[BuildStrings]);
+            foreach ((long id, long nameId) in ParseInfo(assets[BuildInfo], BuildNameField).OrderBy(kv => kv.Key))
+                if (texts.TryGetValue(nameId, out string? text) && named.Add(id))
+                    rows.Add(("building", id, Clean(text)));
+        }
         if (assets.ContainsKey(BuildInfo) && assets.ContainsKey("Card"))
         {
             var buildings = new HashSet<long>(ParseValues(assets[BuildInfo], 2).Keys);
             var cardNames = rows.Where(r => r.Kind == "card").ToDictionary(r => r.Id, r => r.Text);
             foreach (ProtoReader item in Items(assets["Card"]))
                 if (CardBuilding(item) is { } pair && buildings.Contains(pair.Building)
-                    && cardNames.TryGetValue(pair.Card, out string? cardName))
+                    && cardNames.TryGetValue(pair.Card, out string? cardName) && named.Add(pair.Building))
                     rows.Add(("building", pair.Building, cardName));
         }
 

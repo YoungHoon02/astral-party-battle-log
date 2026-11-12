@@ -40,6 +40,7 @@
     <Compile Include="$(SrcDir)\UI\ScheduleHealth.cs" />
     <Compile Include="$(SrcDir)\UI\ScreenCandidates.cs" />
     <Compile Include="$(SrcDir)\Log\ReplayWriter.cs" />
+    <Compile Include="$(SrcDir)\Log\NameConfig.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -104,7 +104,7 @@ internal static class NameHarvest
                 return;
             }
 
-            HashSet<string> wanted = NameConfig.Required();
+            HashSet<string> wanted = NameConfig.Wanted();
             var list = _handle.Result;
             if (list is null) { _log?.LogWarning("Addressables returned no assets."); return; }
 

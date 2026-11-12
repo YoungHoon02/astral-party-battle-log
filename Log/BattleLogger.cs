@@ -528,7 +528,8 @@ internal sealed class BattleLogger
         Said(CardCause, cardId, pid);
         _saidCardName = _logCards ? Palette.Strip(CardLabel(cardId)) : null;
         if (!_logCards) { AdvanceOverlay(_kind); return; }
-        var sb = new StringBuilder($"{RoundTag} {_roster.Name(pid)} 효과카드 {CardLabel(cardId)}");
+        string label = _names.Lookup("cardtype", cardId) == "Build" ? "건물카드" : "효과카드";
+        var sb = new StringBuilder($"{RoundTag} {_roster.Name(pid)} {label} {CardLabel(cardId)}");
         AppendTargets(sb, targets);
         Emit(sb.ToString());
     }

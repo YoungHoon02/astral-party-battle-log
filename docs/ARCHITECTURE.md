@@ -248,7 +248,8 @@ STRCard { 1: repeated STRCardLocalConfigure
 | event | Event | 5 | |
 | land | Land | 5 | id 필드 이름은 LandType이지만 번호는 1 |
 | relic | Relic | 7 | **인게임 용어는 "칩"** — 표 이름만 relic |
-| cardtype | Card | (필드 9 열거형) | 문자열표와 조인하지 않는다. 색상용 `Attack`/`Defend`/`Other` |
+| cardtype | Card | (필드 9 열거형) | 문자열표와 조인하지 않는다. 색상용 `Attack`/`Defend`/`Other`, 건물 카드(9)는 `Build`라 카드 줄 머리말이 `건물카드`가 된다 |
+| building | Build | 2 (`STRBuild`) | `STRBuild`가 없거나 이름이 없으면 그 건물을 놓는 카드 이름을 빌린다(카드 `Params` 둘째 값). 성검(30000)처럼 놓는 카드가 없는 건물은 `STRBuild`로만 이름이 나온다. `STRBuild`는 필수 목록에 넣지 않아, 없어도 이름표를 다시 만든다 |
 | relicgrade | Relic | (필드 2 열거형) | 칩 등급. 색상용 `Blue`/`Purple`/`Orange` |
 | monster | Monster | 3 | `Hero.HeroId`가 키다 |
 | character | Character | 4 | 플레이어 캐릭터 |

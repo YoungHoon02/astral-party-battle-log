@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using AstralPartyBattleLog.Log;
 using AstralPartyBattleLog.Net;
 using BepInEx.Logging;
@@ -77,7 +78,7 @@ class Program
         string dir = Path.GetTempPath() + "apbl-h";
         Directory.CreateDirectory(dir);
         string namesPath = Path.Combine(dir, "names.tsv");
-        File.WriteAllText(namesPath, "skill\t777\t훔치기\ncard\t42\t폭탄\nbuff\t4200\t폭탄\nbuff\t4300\t광폭\nbuff\t10006\t【표식】\n"
+        File.WriteAllText(namesPath, "skill\t777\t훔치기\ncard\t42\t폭탄\ncard\t43\t질주 버섯\ncardtype\t43\tBuild\nbuff\t4200\t폭탄\nbuff\t4300\t광폭\nbuff\t10006\t【표식】\n"
             + "monster\t3187\t도둑\nmonster\t3190\t타락한 봉황\nmonster\t3191\t마법 찻주전자\n"
             + "character\t1001\t패니\ncharacter\t1002\t루루\n", new System.Text.UTF8Encoding(false));
         var names = NameTable.Load(namesPath, _ => { });
@@ -313,6 +314,8 @@ class Program
             sj.OnFrame(new FrameHeader(Op.UseEffectCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 830), Frame.Fix32(2, 42)));
             Attr2(Gain(830, 72, 4300));
         });
+        var n8 = Case(() =>
+            sj.OnFrame(new FrameHeader(Op.UseEffectCard, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 830), Frame.Fix32(2, 43))));
         var nCases = new (string Label, List<string> Got, string[] Want)[]
         {
             ("N1 차례 주인이 아닌 사람이 받은 골드 → 받은 사람이 주어", n1, new[] { "[R?] ?2", "?2 골드 8→15  +7", "· ?1 행동 시작" }),
@@ -322,6 +325,7 @@ class Program
             ("N5 레벨 업", n5, new[] { "[R?] ?1", "?1 골드 18→3  -15", "?1 레벨 업 → Lv1" }),
             ("N6 카드 이름과 같은 버프는 카드 줄에 잇는다", n6, new[] { "[R?] ?1 효과카드 \"폭탄\"", "버프 부여 ?1 \"폭탄\"" }),
             ("N7 다른 이름의 버프는 따로 머리줄", n7, new[] { "[R?] ?1 효과카드 \"폭탄\"", "[R?] ?1", "버프 부여 ?1 \"광폭\"" }),
+            ("N8 건물 카드는 건물카드로 적는다", n8, new[] { "[R?] ?1 건물카드 \"질주 버섯\"" }),
         };
         foreach (var c in nCases)
         {
@@ -614,6 +618,40 @@ class Program
         bool fpok = fp0 && fp1 && fp2;
         Console.WriteLine($"  {(fpok ? "OK  " : "FAIL")} H2 프레임을 낸 스트림만 게임 소켓으로 표시한다: {fp0}/{fp1}/{fp2}");
         if (!fpok) fails++;
+
+        Console.WriteLine();
+        Console.WriteLine("=== 설정 에셋 이름표 ===");
+        {
+            byte[] Utf8(int f, string s) => Frame.Msg(f, System.Text.Encoding.UTF8.GetBytes(s));
+            byte[] Table(params byte[][] items) => Frame.Cat(items.Select(i => Frame.Msg(1, i)).ToArray());
+            // 카드 Params는 sint32 zigzag packed: [0, 30001] → 0, 60002
+            byte[] packed = Frame.Varint(1, 60002).Skip(1).Prepend((byte)0).ToArray();
+            var assets = new Dictionary<string, byte[]>
+            {
+                ["Build"] = Table(Frame.Cat(Frame.Fix32(1, 30000), Frame.Fix32(2, 900)),
+                                  Frame.Cat(Frame.Fix32(1, 30001), Frame.Fix32(2, 901))),
+                ["STRBuild"] = Table(Frame.Cat(Frame.Fix32(1, 900), Utf8(3, "Sword in the Stone"))),
+                ["Card"] = Table(Frame.Cat(Frame.Fix32(1, 21026), Frame.Fix32(2, 700), Frame.Fix32(9, 9), Frame.Msg(20, packed)),
+                                 Frame.Cat(Frame.Fix32(1, 21000), Frame.Fix32(2, 701), Frame.Fix32(9, 3))),
+                ["STRCard"] = Table(Frame.Cat(Frame.Fix32(1, 700), Utf8(3, "Swiftshroom")),
+                                    Frame.Cat(Frame.Fix32(1, 701), Utf8(3, "Bomb"))),
+            };
+            var rows = NameConfig.Build(assets).ToDictionary(r => $"{r.Kind} {r.Id}", r => r.Text);
+            string Row(string key) => rows.TryGetValue(key, out string? v) ? v : "(없음)";
+            var nc = new (string Label, bool Ok, string Got)[]
+            {
+                ("NC1 놓는 카드가 없는 건물은 STRBuild 이름", Row("building 30000") == "Sword in the Stone", Row("building 30000")),
+                ("NC2 STRBuild에 이름이 없으면 놓는 카드 이름", Row("building 30001") == "Swiftshroom", Row("building 30001")),
+                ("NC3 건물 카드 종류는 Build, 효과 카드는 Other", Row("cardtype 21026") == "Build" && Row("cardtype 21000") == "Other",
+                    $"{Row("cardtype 21026")}/{Row("cardtype 21000")}"),
+                ("NC4 STRBuild는 읽되 필수 목록에는 없음", NameConfig.Wanted().Contains("STRBuild") && !NameConfig.Required().Contains("STRBuild"), ""),
+            };
+            foreach (var c in nc)
+            {
+                Console.WriteLine($"  {(c.Ok ? "OK  " : "FAIL")} {c.Label}: {c.Got}");
+                if (!c.Ok) fails++;
+            }
+        }
 
         Console.WriteLine();
         Console.WriteLine("=== 빠른 대화 / 마커 ===");
