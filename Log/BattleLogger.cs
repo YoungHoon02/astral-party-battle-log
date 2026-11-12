@@ -563,6 +563,7 @@ internal sealed class BattleLogger
     // 카드·칩 공유가 함께 쓰는 마커(BattleCardMessage.MarkId), 스킬·미션 공유가 쓰는 문구 id
     private const long ItemShareMark = 40018;
     private const long SkillReadyChat = 40010, SkillCooldownChat = 40011, PveTaskChat = 40015;
+    private const long OtherSkillReadyChat = 40021, OtherSkillCooldownChat = 40022;
 
     // 플레이어 마커는 게임 대사 대신 "누가 누구에게 무엇을"로 적는다. 표에 없는 마커는 게임 대사를 쓴다.
     private static readonly Dictionary<long, string> PlayerMarks = new()
@@ -601,9 +602,8 @@ internal sealed class BattleLogger
             CardMsg => Shared(who, ChatText("chatmark", ItemShareMark, CardLabel(Arg(1)))),
             RelicMsg => Shared(who, ChatText("chatmark", ItemShareMark,
                 RelicText(Arg(1)) is { Length: > 0 } relic ? relic : $"칩 #{Arg(1)}")),
-            SkillMsg => Shared(who, Arg(1) == 0
-                ? ChatText("chat", SkillReadyChat)
-                : ChatText("chat", SkillCooldownChat, Arg(1).ToString())),
+            // 2026-11-12부터 "9, 대상 id, 쿨타임"이고 대상 id는 계정 uid다. 그 전 형식 "9, 쿨타임"도 받는다.
+            SkillMsg => parts.Length >= 3 ? SkillShare(who, pid, Arg(1), Arg(2)) : SkillShare(who, pid, pid, Arg(1)),
             PveEventMsg => Shared(who, ChatText("chatmark", Arg(1), Arg(2).ToString(),
                 parts.Length > 3 ? string.Join(" & ", parts[3].Split('|').Select(e => $"#{e.Trim()}")) : "?")),
             PveTaskMsg => Shared(who, ChatText("chat", PveTaskChat, $"#{Arg(1)}")),
@@ -633,6 +633,17 @@ internal sealed class BattleLogger
         : _roster.IsCharacter(v) ? Who(v)
         : Math.Abs(v) >= 1_000_000 ? "#"
         : p));
+
+    private string? SkillShare(string who, long pid, long target, long cooldown)
+    {
+        string turns = cooldown.ToString();
+        if (target == pid)
+            return Shared(who, cooldown == 0 ? ChatText("chat", SkillReadyChat) : ChatText("chat", SkillCooldownChat, turns));
+        string whom = _roster.Name(target);
+        return Shared(who, cooldown == 0
+            ? ChatText("chat", OtherSkillReadyChat, whom)
+            : ChatText("chat", OtherSkillCooldownChat, whom, turns));
+    }
 
     private static string? Shared(string who, string? text) => text is null ? null : $"{who} 공유: {text}";
 

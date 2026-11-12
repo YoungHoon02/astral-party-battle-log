@@ -620,6 +620,7 @@ class Program
         string chatPath = Path.Combine(dir, "names-chat.tsv");
         File.WriteAllText(chatPath, "card\t42\t폭탄\ncardtype\t42\tAttack\nchat\t10001\t준비!\n"
             + "chat\t40010\t스킬 준비 완료!\nchat\t40011\t스킬 쿨타임 {0}턴 남았어\n"
+            + "chat\t40021\t{0}의 스킬 준비 완료!\nchat\t40022\t{0}의 스킬 쿨타임 {1}턴 남았어\n"
             + "chatmark\t40002\t이쪽으로 이동해!\nchatmark\t40018\t나 {0} 있어\nchatmark\t40099\t{0} 새 마커 {1}\n",
             new System.Text.UTF8Encoding(false));
         var chatNames = NameTable.Load(chatPath, _ => { });
@@ -653,6 +654,12 @@ class Program
         ExpectChat("M7 스킬 쿨타임 공유", "Immediate [R?] ?1 공유: 스킬 쿨타임 2턴 남았어");
         Marker(5, "9, 0");
         ExpectChat("M8 스킬 준비 공유", "Immediate [R?] ?1 공유: 스킬 준비 완료!");
+        Marker(5, "9, 5, 3");
+        ExpectChat("M8a 새 형식: 자기 스킬 쿨타임", "Immediate [R?] ?1 공유: 스킬 쿨타임 3턴 남았어");
+        Marker(5, "9, 6, 0");
+        ExpectChat("M8b 새 형식: 다른 플레이어 스킬 준비", "Immediate [R?] ?1 공유: ?2의 스킬 준비 완료!");
+        Marker(5, "9, 2233445, 2");
+        ExpectChat("M8c 새 형식: 대상 uid를 숫자로 남기지 않음", "Immediate [R?] ?1 공유: ?3의 스킬 쿨타임 2턴 남았어");
         Marker(5, "99, 1");
         ExpectChat("M9 모르는 종류는 남기지 않음", "");
         var muted = new BattleLogger(log, null, false, new HashSet<int>(), false, true, chatNames) { LogChat = false };
