@@ -606,8 +606,9 @@ internal sealed class BattleLogger
             // 2026-11-12부터 "9, 대상 id, 쿨타임"이고 대상 id는 계정 uid다. 그 전 형식 "9, 쿨타임"도 받는다.
             SkillMsg => parts.Length >= 3 ? SkillShare(who, pid, Arg(1), Arg(2)) : SkillShare(who, pid, pid, Arg(1)),
             PveEventMsg => Shared(who, ChatText("chatmark", Arg(1), Arg(2).ToString(),
-                parts.Length > 3 ? string.Join(" & ", parts[3].Split('|').Select(e => $"#{e.Trim()}")) : "?")),
-            PveTaskMsg => Shared(who, ChatText("chat", PveTaskChat, $"#{Arg(1)}")),
+                parts.Length > 3 ? EventCardsText(parts[3]) : "?")),
+            PveTaskMsg => Shared(who, ChatText("chat", PveTaskChat,
+                _names.Lookup("mission", Arg(1)) is { } title ? $"\"{title}\"" : $"#{Arg(1)}")),
             _ => null,
         };
 
@@ -644,6 +645,17 @@ internal sealed class BattleLogger
         return Shared(who, cooldown == 0
             ? ChatText("chat", OtherSkillReadyChat, whom)
             : ChatText("chat", OtherSkillCooldownChat, whom, turns));
+    }
+
+    // 이벤트 카드 목록은 "a|b" 꼴이고 끝에 빈 칸이 붙어 오기도 한다. 게임처럼 빈 칸은 버린다.
+    private string EventCardsText(string list)
+    {
+        var cards = list.Split('|')
+            .Select(e => e.Trim())
+            .Where(e => e.Length > 0)
+            .Select(e => long.TryParse(e, out long id) && _names.Lookup("eventcard", id) is { } name ? $"\"{name}\"" : $"#{e}")
+            .ToList();
+        return cards.Count > 0 ? string.Join(" & ", cards) : "?";
     }
 
     private static string? Shared(string who, string? text) => text is null ? null : $"{who} 공유: {text}";

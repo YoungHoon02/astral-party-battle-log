@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using AstralPartyBattleLog.Proto;
 
 namespace AstralPartyBattleLog.Log;
@@ -49,7 +50,7 @@ internal static class NameConfig
     private const int ChatMarkTextField = 2;
 
     // 표 구성이 바뀌면 올린다. 옛 names.tsv는 다음 실행에 다시 만들어진다.
-    public const int Schema = 4;
+    public const int Schema = 5;
 
     // 건물 이름은 STRBuild(BuildInfoConfigure.NameID=2)에서 읽고, 없으면 그 건물을 놓는 카드의 이름을 빌린다
     // (CardInfoConfigure.Params 둘째 값이 건물 id, sint32 zigzag packed). STRBuild는 2026-11-12에야 확인한 표라
@@ -59,6 +60,22 @@ internal static class NameConfig
     private const int BuildNameField = 2;
     private const int CardParams = 20;
     private const int CardBuildingIndex = 1;
+
+    // PvE 핑에만 쓰는 표라 필수 목록에서 뺐다. 없어도 다른 이름은 그대로 만든다.
+    // 이벤트 카드: MapEvent.MapEventCards(3) {1:Id, 2:NameID} → STRMapEvent
+    private const string MapEventInfo = "MapEvent";
+    private const string MapEventStrings = "STRMapEvent";
+    private const int MapEventCardList = 3;
+    private const int MapEventCardNameField = 2;
+
+    // 임무: PVEMission.Infos {1:Id, 4:MissionDescID, 5:map<int, {1:packed Values}> MissionTargetConfigs,
+    // 7:MissionTarget, 8:MissionParam} → STRPVEMission
+    private const string MissionInfo = "PVEMission";
+    private const string MissionStrings = "STRPVEMission";
+
+    // PVEMissionTargetType: 처치(1)는 몬스터 이름을, 누적 횟수류는 첫 값을 제목 칸에 채운다.
+    private const int KillMonsterTarget = 1;
+    private static readonly int[] CountTargets = { 5, 6, 7, 8, 9, 10 };
 
     public static HashSet<string> Required()
     {
@@ -72,7 +89,7 @@ internal static class NameConfig
     public static HashSet<string> Wanted()
     {
         var wanted = Required();
-        wanted.Add(BuildStrings);
+        wanted.UnionWith(new[] { BuildStrings, MapEventInfo, MapEventStrings, MissionInfo, MissionStrings });
         return wanted;
     }
 
@@ -136,7 +153,146 @@ internal static class NameConfig
                         rows.Add(("chatmark", id, Clean(text)));
         }
 
+        if (assets.ContainsKey(MapEventInfo) && assets.ContainsKey(MapEventStrings))
+        {
+            Dictionary<long, string> texts = ParseStrings(assets[MapEventStrings]);
+            foreach ((long id, long nameId) in ParseInfo(assets[MapEventInfo], MapEventCardNameField, MapEventCardList).OrderBy(kv => kv.Key))
+                if (texts.TryGetValue(nameId, out string? text))
+                    rows.Add(("eventcard", id, Clean(text)));
+        }
+
+        if (assets.ContainsKey(MissionInfo) && assets.ContainsKey(MissionStrings))
+        {
+            Dictionary<long, string> texts = ParseStrings(assets[MissionStrings]);
+            var heroes = rows.Where(r => r.Kind == "character").ToDictionary(r => r.Id, r => r.Text);
+            var monsters = rows.Where(r => r.Kind == "monster").ToDictionary(r => r.Id, r => r.Text);
+            // CharacterHandle.GetCharacterName처럼 영웅 표를 먼저 본다.
+            string? CharacterName(long id) =>
+                heroes.TryGetValue(id, out string? h) ? h : monsters.TryGetValue(id, out string? m) ? m : null;
+            foreach (Mission mission in Items(assets[MissionInfo]).Select(ReadMission).OrderBy(m => m.Id))
+                if (mission.Id != 0 && texts.TryGetValue(mission.DescId, out string? desc))
+                    rows.Add(("mission", mission.Id, Clean(MissionTitle(mission, desc, CharacterName))));
+        }
+
         return rows;
+    }
+
+    private sealed class Mission
+    {
+        public long Id, DescId;
+        public readonly List<long> Targets = new(), Params = new();
+        public readonly List<(long Key, List<long> Values)> Configs = new();
+    }
+
+    private static readonly Regex Placeholder = new(@"\{(\d+)\}");
+
+    // MapMissionTargetData.GetTitle을 설정만으로 따라 한다.
+    // MissionTargetConfigs가 있으면 IPVEMissionTargetConfigs.GetTitleByMissionTargetConfigs와 같다.
+    // 없는 옛 임무는 서버가 보내는 목표 종류에 따라 갈리는데(수집·변신은 MissionParam, 보스 체력은 대상 이름,
+    // 그 외는 문구 뒤에 대상 이름) 그 값은 설정에 없다. 그래서 대상이 모두 이름이 있으면 이름을, 아니면 MissionParam을 쓴다.
+    private static string MissionTitle(Mission m, string desc, Func<long, string?> characterName)
+    {
+        int slots = Placeholder.Matches(desc).Count;
+        var args = new List<string>();
+        if (slots == 0)
+        {
+            // 대상이 여럿인 옛 임무(320880 등)는 게임도 문구만 쓴다.
+            return m.Configs.Count == 0 && m.Targets.Count == 1 && characterName(m.Targets[0]) is { } single
+                ? $"{desc} {single}"
+                : desc;
+        }
+
+        if (m.Configs.Count > 0)
+        {
+            foreach ((long key, List<long> values) in m.Configs)
+            {
+                if (values.Count == 0) continue;
+                if (key == KillMonsterTarget)
+                    args.AddRange(values.Skip(1).Select(id => characterName(id) ?? "?"));
+                else if (Array.IndexOf(CountTargets, (int)key) >= 0)
+                    args.Add(values[0].ToString());
+            }
+        }
+        else
+        {
+            var names = m.Targets.Take(slots).Select(characterName).ToList();
+            if (names.Count == slots && names.All(n => n is not null)) args.AddRange(names!);
+            else if (m.Params.Count > 0) args.Add(m.Params[0].ToString());
+        }
+
+        return Placeholder.Replace(desc, match =>
+            int.TryParse(match.Groups[1].Value, out int i) && i < args.Count ? args[i] : "?");
+    }
+
+    private static Mission ReadMission(ProtoReader item)
+    {
+        var m = new Mission();
+        while (item.NextField(out int f, out int w))
+        {
+            bool ok = f switch
+            {
+                5 when w == ProtoReader.WireLength => ReadTargetConfig(ref item, m.Configs),
+                7 => ReadInts(ref item, w, m.Targets),
+                8 => ReadInts(ref item, w, m.Params),
+                _ when w == ProtoReader.WireLength => item.Skip(w),
+                _ => ReadId(ref item, w, f, m),
+            };
+            if (!ok) break;
+        }
+        return m;
+    }
+
+    private static bool ReadId(ref ProtoReader item, int wire, int field, Mission m)
+    {
+        if (!item.TryReadNumber(wire, out long v)) return false;
+        if (field == 1) m.Id = v;
+        else if (field == 4) m.DescId = v;
+        return true;
+    }
+
+    // map<int, {1: repeated sfixed32 Values}> 항목 하나
+    private static bool ReadTargetConfig(ref ProtoReader item, List<(long Key, List<long> Values)> into)
+    {
+        if (!item.TryReadMessage(out ProtoReader entry)) return false;
+        long key = 0;
+        var values = new List<long>();
+        while (entry.NextField(out int f, out int w))
+        {
+            if (f == 2 && w == ProtoReader.WireLength)
+            {
+                if (!entry.TryReadMessage(out ProtoReader val)) return false;
+                while (val.NextField(out int vf, out int vw))
+                    if (!(vf == 1 ? ReadInts(ref val, vw, values) : val.Skip(vw))) return false;
+            }
+            else if (w == ProtoReader.WireLength)
+            {
+                if (!entry.Skip(w)) return false;
+            }
+            else if (!entry.TryReadNumber(w, out long v))
+            {
+                return false;
+            }
+            else if (f == 1)
+            {
+                key = v;
+            }
+        }
+        into.Add((key, values));
+        return true;
+    }
+
+    // repeated sfixed32는 packed(길이형)로 오지만 파서는 낱개 모양도 받는다.
+    private static bool ReadInts(ref ProtoReader r, int wire, List<long> into)
+    {
+        if (wire != ProtoReader.WireLength)
+        {
+            if (!r.TryReadNumber(wire, out long one)) return false;
+            into.Add(one);
+            return true;
+        }
+        if (!r.TryReadMessage(out ProtoReader chunk)) return false;
+        while (chunk.HasMore && chunk.TryReadFixed32(out long v)) into.Add(v);
+        return true;
     }
 
     private static (long Card, long Building)? CardBuilding(ProtoReader item)

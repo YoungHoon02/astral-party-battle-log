@@ -646,6 +646,49 @@ class Program
                     $"{Row("cardtype 21026")}/{Row("cardtype 21000")}"),
                 ("NC4 STRBuild는 읽되 필수 목록에는 없음", NameConfig.Wanted().Contains("STRBuild") && !NameConfig.Required().Contains("STRBuild"), ""),
             };
+            byte[] Ints(int f, params int[] v) => Frame.Msg(f, v.SelectMany(BitConverter.GetBytes).ToArray());
+            byte[] TargetConfig(int key, params int[] v) => Frame.Msg(5, Frame.Cat(Frame.Fix32(1, key), Frame.Msg(2, Ints(1, v))));
+            var pve = new Dictionary<string, byte[]>
+            {
+                ["Monster"] = Table(Frame.Cat(Frame.Fix32(1, 1073), Frame.Fix32(3, 800)),
+                                    Frame.Cat(Frame.Fix32(1, 1037), Frame.Fix32(3, 801)),
+                                    Frame.Cat(Frame.Fix32(1, 1027), Frame.Fix32(3, 802))),
+                ["STRMonster"] = Table(Frame.Cat(Frame.Fix32(1, 800), Utf8(3, "Sinful Teapot")),
+                                       Frame.Cat(Frame.Fix32(1, 801), Utf8(3, "Cataclysm")),
+                                       Frame.Cat(Frame.Fix32(1, 802), Utf8(3, "Souri"))),
+                ["PVEMission"] = Table(
+                    Frame.Cat(Frame.Fix32(1, 321220), Frame.Fix32(4, 900), TargetConfig(1, 3, 1073)),
+                    Frame.Cat(Frame.Fix32(1, 321250), Frame.Fix32(4, 903), TargetConfig(8, 8)),
+                    Frame.Cat(Frame.Fix32(1, 320560), Frame.Fix32(4, 901), Ints(7, 2300), Ints(8, 4)),
+                    Frame.Cat(Frame.Fix32(1, 320620), Frame.Fix32(4, 902), Ints(7, 1037), Ints(8, 1)),
+                    Frame.Cat(Frame.Fix32(1, 320880), Frame.Fix32(4, 904), Ints(7, 1037, 1073), Ints(8, 1)),
+                    Frame.Cat(Frame.Fix32(1, 321040), Frame.Fix32(4, 905), Ints(7, 1027), Ints(8, 1, 189))),
+                ["STRPVEMission"] = Table(Frame.Cat(Frame.Fix32(1, 900), Utf8(3, "KO {0}")),
+                                          Frame.Cat(Frame.Fix32(1, 901), Utf8(3, "Collect {0} gourds")),
+                                          Frame.Cat(Frame.Fix32(1, 902), Utf8(3, "Knock out")),
+                                          Frame.Cat(Frame.Fix32(1, 903), Utf8(3, "Build {0} buildings")),
+                                          Frame.Cat(Frame.Fix32(1, 904), Utf8(3, "Defeat Fen")),
+                                          Frame.Cat(Frame.Fix32(1, 905), Utf8(3, "{0}'s HP is below 189"))),
+                ["MapEvent"] = Frame.Cat(Frame.Msg(1, Frame.Cat(Frame.Fix32(1, 31001), Frame.Fix32(2, 950))),
+                                         Frame.Msg(3, Frame.Cat(Frame.Fix32(1, 32133), Frame.Fix32(2, 951)))),
+                ["STRMapEvent"] = Table(Frame.Cat(Frame.Fix32(1, 950), Utf8(3, "Monster Attack")),
+                                        Frame.Cat(Frame.Fix32(1, 951), Utf8(3, "Lurking"))),
+            };
+            var pveRows = NameConfig.Build(pve).ToDictionary(r => $"{r.Kind} {r.Id}", r => r.Text);
+            string Pve(string key) => pveRows.TryGetValue(key, out string? v) ? v : "(없음)";
+            nc = nc.Concat(new (string Label, bool Ok, string Got)[]
+            {
+                ("NC5 처치 목표 임무는 몬스터 이름을 채운다", Pve("mission 321220") == "KO Sinful Teapot", Pve("mission 321220")),
+                ("NC6 누적 목표 임무는 첫 값을 채운다", Pve("mission 321250") == "Build 8 buildings", Pve("mission 321250")),
+                ("NC7 이름 없는 대상의 옛 임무는 MissionParam", Pve("mission 320560") == "Collect 4 gourds", Pve("mission 320560")),
+                ("NC8 칸 없는 옛 처치 임무는 대상 이름을 붙인다", Pve("mission 320620") == "Knock out Cataclysm", Pve("mission 320620")),
+                ("NC9 대상이 여럿이고 칸이 없으면 문구만", Pve("mission 320880") == "Defeat Fen", Pve("mission 320880")),
+                ("NC10 옛 임무의 이름 있는 대상은 이름으로", Pve("mission 321040") == "Souri's HP is below 189", Pve("mission 321040")),
+                ("NC11 이벤트 카드는 MapEventCards에서만", Pve("eventcard 32133") == "Lurking" && Pve("eventcard 31001") == "(없음)",
+                    $"{Pve("eventcard 32133")}/{Pve("eventcard 31001")}"),
+                ("NC12 PvE 표는 읽되 필수 목록에는 없음",
+                    new[] { "MapEvent", "STRMapEvent", "PVEMission", "STRPVEMission" }.All(t => NameConfig.Wanted().Contains(t) && !NameConfig.Required().Contains(t)), ""),
+            }).ToArray();
             foreach (var c in nc)
             {
                 Console.WriteLine($"  {(c.Ok ? "OK  " : "FAIL")} {c.Label}: {c.Got}");
@@ -659,7 +702,9 @@ class Program
         File.WriteAllText(chatPath, "card\t42\t폭탄\ncardtype\t42\tAttack\nchat\t10001\t준비!\n"
             + "chat\t40010\t스킬 준비 완료!\nchat\t40011\t스킬 쿨타임 {0}턴 남았어\n"
             + "chat\t40021\t{0}의 스킬 준비 완료!\nchat\t40022\t{0}의 스킬 쿨타임 {1}턴 남았어\n"
-            + "chatmark\t40002\t이쪽으로 이동해!\nchatmark\t40018\t나 {0} 있어\nchatmark\t40099\t{0} 새 마커 {1}\n",
+            + "chatmark\t40002\t이쪽으로 이동해!\nchatmark\t40018\t나 {0} 있어\nchatmark\t40099\t{0} 새 마커 {1}\n"
+            + "chat\t40015\t{0} 미션을 먼저 하자\nmission\t321220\t죄많은 찻주전자 처치\n"
+            + "chatmark\t40030\t진행도 {0}의 {1} 주의해!\neventcard\t32133\t잠복\n",
             new System.Text.UTF8Encoding(false));
         var chatNames = NameTable.Load(chatPath, _ => { });
         var said = new List<string>();
@@ -700,6 +745,14 @@ class Program
         ExpectChat("M8c 새 형식: 대상 uid를 숫자로 남기지 않음", "Immediate [R?] ?1 공유: ?3의 스킬 쿨타임 2턴 남았어");
         Marker(5, "99, 1");
         ExpectChat("M9 모르는 종류는 남기지 않음", "");
+        Marker(5, "7, 321220");
+        ExpectChat("M9a 임무 공유는 임무 제목", "Immediate [R?] ?1 공유: \"죄많은 찻주전자 처치\" 미션을 먼저 하자");
+        Marker(5, "7, 999999");
+        ExpectChat("M9b 이름표에 없는 임무는 id", "Immediate [R?] ?1 공유: #999999 미션을 먼저 하자");
+        Marker(5, "6, 40030, 7, 32133|");
+        ExpectChat("M9c 이벤트 카드 공유는 카드 이름, 빈 칸은 버린다", "Immediate [R?] ?1 공유: 진행도 7의 \"잠복\" 주의해!");
+        Marker(5, "6, 40030, 7, 32133|40000");
+        ExpectChat("M9d 이름표에 없는 이벤트 카드는 id", "Immediate [R?] ?1 공유: 진행도 7의 \"잠복\" & #40000 주의해!");
         var muted = new BattleLogger(log, null, false, new HashSet<int>(), false, true, chatNames) { LogChat = false };
         muted.Mirror = (s, k, g, u, _) => said.Add(s);
         muted.OnFrame(new FrameHeader(Op.RoomShortChat, 0, 0, 0), Frame.Cat(Frame.Fix64(1, 5), Frame.Fix32(2, 10001)));

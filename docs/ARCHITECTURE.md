@@ -257,9 +257,26 @@ STRCard { 1: repeated STRCardLocalConfigure
 | monskill | Monster | (17 액티브, **18 packed 패시브**) | 〃 |
 | chat | — | (`STRChat` 그대로) | 빠른 대화·공유 문구. id가 곧 문구 id다 |
 | chatmark | Chat | 2 (**목록은 필드 3** `Marks`) | 마커 id → 문구. 40017→21012, 40018→40000처럼 id가 다른 것이 있어 조인이 필요하다 |
+| eventcard | MapEvent | 2 (**목록은 필드 3** `MapEventCards`, `STRMapEvent`) | 라운드 이벤트 카드(몬스터 등장 등). 필드 1 `Infos`는 다른 표라 읽지 않는다 |
+| mission | PVEMission | 4 `MissionDescID` (`STRPVEMission`) | 임무 제목. 문구의 `{0}`을 채워 넣은 완성문이다 (아래) |
 
 **`Chat` 표만 목록이 필드 1이 아니다** — `{1:Infos, 2:InfoDict, 3:Marks, 4:MarkDict}`이고
 마커는 3에 있다.
+
+**`eventcard`/`mission`은 PvE 핑에만 쓰여 필수 목록에 넣지 않았다** (`STRBuild`와 같다).
+
+**임무 제목은 게임이 문구에 값을 채워 만든다** (`MapMissionTargetData.GetTitle`). 이름표에는
+채운 결과를 넣는다:
+
+- `MissionTargetConfigs`(필드 5, `map<int, {1: packed Values}>`)가 있으면
+  `IPVEMissionTargetConfigs.GetTitleByMissionTargetConfigs`와 같다 — 처치(1)는 `Values[1..]`의
+  몬스터 이름, 누적 횟수류(5~10)는 `Values[0]`을 순서대로 채운다. 현재 맵의 임무는 대부분 이쪽이라
+  게임 화면과 같은 제목이 나온다.
+- 없는 옛 임무는 **서버가 보내는 목표 종류**(`MapMissionTarget.TargetType`)에 따라 수집·변신은
+  `MissionParam[0]`, 그 외는 대상 이름을 쓰는데, 그 값은 설정에 없다. 그래서 대상(`MissionTarget`)이
+  모두 이름이 있으면 이름을, 아니면 `MissionParam[0]`을 채운다. **320570(소우리 금린 중첩)은 대상이
+  몬스터라 숫자 자리에 이름이 들어간다** — 알려진 예외다. 칸이 없는 처치 문구는 게임처럼 대상
+  이름을 뒤에 붙이고, 대상이 여럿이면(320880) 문구만 쓴다.
 
 **표 구성을 바꾸면 `NameConfig.Schema`를 올린다** (`extract_names.py`의 `SCHEMA`도). 파일
 첫 줄 `# schema N`이 이보다 낮으면 내용이 같아도 다시 쓴다.
@@ -346,6 +363,11 @@ python <skills>/unity-bundle-inspector/scripts/scan_bundles.py \
   --text -o gamedata   --grep '^(Card|Skill|Buff|Event|Land|Relic|Monster|Character|STR(Card|Skill|Buff|Event|Land|Relic|Monster|Character))$'
 python tools/extract_names.py gamedata names.tsv
 ```
+
+**캐시가 한 곳이 아닐 수 있다.** 한글패치가 깔린 환경에서는 최신 설정 번들이 게임 설치 폴더의
+`AstralParty_INT_Data/com.unity.addressables`에 있고, 위 `LocalLow` 쪽은 한글패치가 받아 둔 예전
+문자열 번들만 남아 있었다(2026-11-17). 추출한 표에 로그의 id가 없으면 설치 폴더 쪽을 본다.
+추출기는 같은 이름의 에셋이 여럿이면 파일이 가장 새것을 고른다.
 
 ## 로그에 이름을 못 붙이는 id (정상)
 
@@ -779,8 +801,8 @@ Msg의 첫 값은 `GameLogic.MessageType`이고, 뒤 인자는 각 `Battle*Messa
 | 8 | `BattleCardMessage` | 카드 id | `공유: 나 "카드" 있어` (마커 40018) |
 | 4 | `BattleRelicMessage` | 칩 id | 〃 (같은 마커 40018) |
 | 9 | `BattleSkillMessage` | 대상 플레이어 id, 남은 쿨타임 (2026-11-12 이전은 쿨타임만) | 대상이 보낸 사람이면 0일 때 문구 40010, 아니면 40011. 다른 플레이어면 40021/40022에 대상 표시명 |
-| 6 | `BattlePveEventMessage` | 마커 id, 진행도, 이벤트 카드 `a\|b` | 이벤트 카드 이름표가 없어 `#id`로 남는다 |
-| 7 | `BattlePveTaskMessage` | 미션 id | 미션 제목은 방 정보에서 오므로 `#id`로 남는다 |
+| 6 | `BattlePveEventMessage` | 마커 id, 진행도, 이벤트 카드 `a\|b` | 카드 이름은 `eventcard` 행. 끝의 빈 칸(`32133\|`)은 게임처럼 버리고, 이름표에 없는 카드만 `#id` |
+| 7 | `BattlePveTaskMessage` | 임무 id | 게임은 방 정보의 임무 목록으로 제목을 만들지만, 제목 문구와 채울 값은 설정에 있어 `mission` 행으로 쓴다. 없으면 `#id` |
 
 **플레이어 마커는 게임 대사 대신 "누가 누구에게 무엇을"로 적는다.** 메뉴는 찍은 대상에
 따라 갈린다(`UIExpression_Com_ChatMenu.ShowPlayerMenu`): 적은 40012/40013/40014, 같은 팀은
